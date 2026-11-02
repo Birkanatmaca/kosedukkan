@@ -1,4 +1,4 @@
-# Yemek Dükkanı (prototip)
+# Köşe Dükkan (prototip)
 
 Tasarım: [../fikirler/02-yemek-dukkani.md](../fikirler/02-yemek-dukkani.md) ·
 Meshy modelleri: [MESHY.md](MESHY.md)

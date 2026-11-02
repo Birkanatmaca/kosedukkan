@@ -51,6 +51,9 @@ func _build_name_dialog() -> void:
 	var welcome := UiKit.badge_rect("house", UiKit.ORANGE, 110)
 	welcome.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(welcome)
+	var game_name := UiKit.label("KÖŞE DÜKKAN", 22, UiKit.ORANGE, 900)
+	game_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(game_name)
 	var title := Label.new()
 	title.text = "Hoş geldin!"
 	title.add_theme_font_override("font", UiKit.font(900))
@@ -65,7 +68,7 @@ func _build_name_dialog() -> void:
 	v.add_child(desc)
 
 	var edit := LineEdit.new()
-	edit.placeholder_text = "Lezzet Durağı"
+	edit.placeholder_text = GameState.DEFAULT_SHOP_NAME
 	edit.max_length = 20
 	edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	edit.custom_minimum_size = Vector2(0, 84)

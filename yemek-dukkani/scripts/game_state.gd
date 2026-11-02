@@ -19,6 +19,8 @@ signal setup_finished
 signal tutorial_changed(step: int)
 
 const MAX_REVIEWS := 30
+## Oyuncu isim vermezse dükkanın adı (oyunun adıyla aynı)
+const DEFAULT_SHOP_NAME := "Köşe Dükkan"
 ## Çalışma saatleri (dakika). Son siparişten sonra yeni müşteri gelmez.
 const OPEN_TIME := 9 * 60
 const LAST_ORDER := 21 * 60
@@ -37,7 +39,7 @@ var staff: Array[Dictionary] = []
 var candidates: Array[Dictionary] = []
 
 ## Başlangıç kurulumu: dükkan adı ve dekor. Kurulum bitene kadar müşteri gelmez.
-var shop_name := "Lezzet Durağı"
+var shop_name := DEFAULT_SHOP_NAME
 var setup_done := false
 var decor := Decor.default_state()
 ## Tanıtım adımı; -1 ise tanıtım yok / bitti.
@@ -46,7 +48,7 @@ var tutorial_step := -1
 
 func set_shop_name(text: String) -> void:
 	text = text.strip_edges()
-	shop_name = text.left(20) if text != "" else "Lezzet Durağı"
+	shop_name = text.left(20) if text != "" else DEFAULT_SHOP_NAME
 	decor_changed.emit()
 
 

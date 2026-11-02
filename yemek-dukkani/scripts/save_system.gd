@@ -104,7 +104,7 @@ func _fresh_state() -> Dictionary:
 		"money": Decor.START_BUDGET, "stock": { "tavuk": 3, "kofte": 3, "patates": 3, "kola": 5 },
 		"prepared": { "tavuk": [], "kofte": [], "patates": [] }, "reviews": [], "level": 1, "xp": 0,
 		"upgrades": {}, "day": 1, "minutes": GameState.OPEN_TIME, "is_open": true, "staff": [],
-		"candidates": Staff.make_candidates(), "shop_name": "Lezzet Durağı", "setup_done": false,
+		"candidates": Staff.make_candidates(), "shop_name": GameState.DEFAULT_SHOP_NAME, "setup_done": false,
 		"decor": Decor.default_state(), "tutorial_step": -1,
 		"day_stats": { "revenue": 0, "tips": 0, "supplies": 0, "upgrades": 0, "wages": 0, "served": 0, "lost": 0 },
 	}
