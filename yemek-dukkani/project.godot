@@ -34,4 +34,6 @@ window/handheld/orientation=1
 [rendering]
 
 renderer/rendering_method="mobile"
+; Emülatörün sanal Vulkan sürücüsü görüntü aktaramıyor; emülatör sürümü OpenGL ES ile çizer.
+renderer/rendering_method.emulator="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
