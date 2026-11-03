@@ -16,7 +16,10 @@ signal order_placed(order: Dictionary)
 signal orders_changed
 signal order_delivered(customer: ShopCustomer, tip: int)
 
-const SPOTS := [Vector3(-1.5, 0, -0.4), Vector3(0, 0, -0.6), Vector3(1.5, 0, -0.4)]
+## Kasanın önündeki tek sipariş yeri (yazar kasanın tam karşısı)
+const SPOTS := [Vector3(0.6, 0, 0.2)]
+## Sıra kasanın arkasında, koridor boyunca tek sıra halinde uzar.
+const QUEUE_START := Vector3(0.45, 0, -0.55)
 const DOOR := Vector3(0, 0, -9.9)
 ## Müşteriler kaldırımda bu x'ten gelir / buraya kadar gidip kaybolur.
 const STREET_END_X := 11.0
@@ -60,14 +63,15 @@ const MALE_NAMES := ["Mehmet", "Can", "Burak", "Emre", "Kerem", "Mert", "Efe", "
 const FEMALE_NAMES := ["Ayşe", "Zeynep", "Elif", "Selin", "Ece", "Defne", "Ada", "Merve", "Esra", "Duru", "İrem", "Buse"]
 ## Masa bulamayan müşteri bu masanın ucunda (önünde, dış tarafta) ayakta bekler.
 const STAND_OFFSET := Vector3(0.5, 0, 0.78)
-## Teslim alanı: sipariş verip numarasıyla bekleyenlerin durduğu yerler (kasanın iki yanı).
+## Teslim alanı: sipariş veren sola kayar, kasanın solundaki boşlukta numarasıyla
+## bekler (önce tezgâha yakın sıra dolar).
 const PICKUP_WAIT := [
-	Vector3(-2.1, 0, -1.05), Vector3(2.1, 0, -1.05), Vector3(-2.9, 0, -1.2),
-	Vector3(2.9, 0, -1.2), Vector3(-2.5, 0, -1.8), Vector3(2.5, 0, -1.8),
+	Vector3(-0.8, 0, 0.25), Vector3(-1.6, 0, 0.25), Vector3(-2.4, 0, 0.25),
+	Vector3(-1.2, 0, -0.5), Vector3(-2.0, 0, -0.5), Vector3(-2.8, 0, -0.5),
 ]
 
-## Kasanın önündeki 3 yer
-var spots: Array = [null, null, null]
+## Kasanın önündeki yer (SPOTS ile aynı sırada; boşsa null)
+var spots: Array = [null]
 ## Kasanın arkasındaki sıra (önden arkaya)
 var queue: Array[ShopCustomer] = []
 ## Her masa: { "pos", "customer", "dirty", "tray", "cleaner", "mark" }. Bir masada tek müşteri oturur.
@@ -148,7 +152,7 @@ func _process(delta: float) -> void:
 		var next: ShopCustomer = queue.pop_front()
 		spots[free] = next
 		next.state = ShopCustomer.State.ARRIVING
-		next.follow([SPOTS[free]], 0.0)
+		next.follow([QUEUE_START, SPOTS[free]], 0.0)
 		customer_added.emit(next)
 		_update_queue()
 
@@ -487,7 +491,7 @@ func _spawn() -> void:
 	var free := spots.find(null)
 	if free != -1 and queue.is_empty():
 		spots[free] = customer
-		customer.follow([AISLE_FRONT, SPOTS[free]], 0.0)
+		customer.follow([QUEUE_START, SPOTS[free]], 0.0)
 		customer_added.emit(customer)
 	else:
 		customer.state = ShopCustomer.State.QUEUED
@@ -498,7 +502,7 @@ func _spawn() -> void:
 ## Sıradakileri koridorda arka arkaya dizer.
 func _update_queue() -> void:
 	for i in queue.size():
-		queue[i].follow([AISLE_FRONT + Vector3(0, 0, -QUEUE_SPACING * i)], 0.0)
+		queue[i].follow([QUEUE_START + Vector3(0, 0, -QUEUE_SPACING * i)], 0.0)
 
 
 ## Temiz ve boş bir masa ayırır; yoksa false.

@@ -77,6 +77,23 @@ func _ready() -> void:
 	_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_fade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	fade_layer.add_child(_fade)
+	_play_intro(fade_layer)
+
+
+## Açılış ekranındaki "Yükleniyor" görseli oyunun ilk karelerinde de üstte kalır
+## (ikonlar ve modeller bu sırada hazırlanır), sonra yumuşakça kaybolur.
+func _play_intro(layer: CanvasLayer) -> void:
+	var intro := TextureRect.new()
+	intro.texture = load(ProjectSettings.get_setting("application/boot_splash/image"))
+	intro.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	intro.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	intro.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	intro.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(intro)
+	var tween := intro.create_tween()
+	tween.tween_interval(0.5)
+	tween.tween_property(intro, "modulate:a", 0.0, 0.35)
+	tween.tween_callback(intro.queue_free)
 
 
 ## Kamerayı kasaya yaklaştırır ya da dükkan görünümüne geri döndürür.

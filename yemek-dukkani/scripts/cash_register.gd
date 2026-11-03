@@ -14,6 +14,7 @@ var _pos_label: Label3D
 var _pos_led: MeshInstance3D
 var _jar_coins: Node3D
 var _jar_count := 0
+var _jar_label: Label3D
 var _drawer_tween: Tween
 
 
@@ -22,6 +23,9 @@ func _ready() -> void:
 	_build_pos()
 	_build_jar()
 	show_idle()
+	# Kavanoz günün bahşişini gösterir: yeniden açılınca o kadar dolu, yeni günde boş.
+	_fill_jar(false)
+	GameState.day_started.connect(func(_day: int) -> void: _clear_jar())
 
 
 ## Ödeme başlarken tutarı gösterir.
@@ -61,21 +65,48 @@ func card_ok() -> void:
 	_set_pos("ONAY", Color("#3fbf6f"))
 
 
-## Bahşiş kavanozuna para düşer.
-func add_tip(amount: int) -> void:
-	for i in clampi(amount / 2, 1, 4):
-		if _jar_count >= MAX_JAR_COINS:
-			return
-		var coin := Util.cylinder(0.035, 0.012, Color("#f6c945"))
-		var layer := _jar_count / 6
-		var angle := _jar_count * 2.4
-		var target := Vector3(cos(angle) * 0.05, 0.02 + layer * 0.014, sin(angle) * 0.05)
-		coin.position = target + Vector3(0, 0.35, 0)
-		coin.rotation_degrees = Vector3(randf_range(-20, 20), 0, randf_range(-20, 20))
-		_jar_coins.add_child(coin)
-		coin.create_tween().tween_property(coin, "position", target, 0.35 + i * 0.08) \
-			.set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
-		_jar_count += 1
+## Bahşiş gelince kavanoza paralar düşer (teslimde, müşteri 5 yıldız verince).
+## Kavanozdaki para miktarı günün toplam bahşişine göredir: her ₺2 bir para.
+func add_tip(_amount: int) -> void:
+	_fill_jar(true)
+
+
+func _fill_jar(animate: bool) -> void:
+	var tips: int = GameState.day_stats["tips"]
+	var target_count := clampi(ceili(tips / 2.0), 0, MAX_JAR_COINS)
+	var i := 0
+	while _jar_count < target_count:
+		_drop_coin(i if animate else -1)
+		i += 1
+	_jar_label.text = "₺%d" % tips if tips > 0 else ""
+
+
+## Bir bozuk para (her beşincisi kâğıt para) kavanozun dibinden yukarı doğru dizilir.
+## delay_index -1 ise animasyonsuz yerine konur.
+func _drop_coin(delay_index: int) -> void:
+	var note := _jar_count % 5 == 4
+	var coin := Util.box(Vector3(0.07, 0.006, 0.04), Color("#7fc77a")) if note else Util.cylinder(0.03, 0.012, Color("#f6c945"))
+	var layer := _jar_count / 5
+	var angle := _jar_count * 2.4
+	var target := Vector3(cos(angle) * 0.035, 0.015 + layer * 0.022, sin(angle) * 0.035)
+	coin.rotation_degrees = Vector3(randf_range(-25, 25), randf_range(0, 180), randf_range(-25, 25))
+	_jar_coins.add_child(coin)
+	_jar_count += 1
+	if delay_index < 0:
+		coin.position = target
+		return
+	coin.position = target + Vector3(0, 0.4, 0)
+	var tween := coin.create_tween()
+	tween.tween_interval(delay_index * 0.09)
+	tween.tween_property(coin, "position", target, 0.35).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+	tween.tween_callback(Sfx.play.bind("coin", 0.05))
+
+
+func _clear_jar() -> void:
+	for coin in _jar_coins.get_children():
+		coin.queue_free()
+	_jar_count = 0
+	_jar_label.text = ""
 
 
 func _move_drawer(z: float) -> void:
@@ -158,3 +189,10 @@ func _build_jar() -> void:
 	var tag := Util.label3d("BAHŞİŞ", 40, Color("#e8553e"), Vector3(0, 0.08, 0.077))
 	tag.pixel_size = 0.0015
 	jar.add_child(tag)
+	# Kavanozun üstünde günün bahşişi
+	_jar_label = Util.label3d("", 56, Color("#f2b33c"), Vector3(0, 0.3, 0))
+	_jar_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_jar_label.outline_size = 14
+	_jar_label.outline_modulate = Color("#5a3a10")
+	_jar_label.pixel_size = 0.0016
+	jar.add_child(_jar_label)

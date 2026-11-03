@@ -102,9 +102,10 @@ static func patience(level: int, item_count: int, comfort_level: int) -> float:
 	return base * (1.0 + 0.12 * comfort_level)
 
 
-## Kasadaki 3 yerin arkasında bekleyebilecek en fazla kişi (sakin dönemde sıra yok).
+## Kasadaki tek yerin arkasında sırada bekleyebilecek en fazla kişi
+## (sakin dönemde bir kişi).
 static func max_queue(level: int) -> int:
-	return 0 if calm() else mini(2 + level / 2, 7)
+	return 1 if calm() else mini(3 + level / 2, 7)
 
 
 static func random_order(level: int) -> Dictionary:

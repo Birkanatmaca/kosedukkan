@@ -12,22 +12,25 @@ var mode := Mode.KITCHEN
 var shop: Shop
 
 var _row: HBoxContainer
-var _empty: Label
+var _empty: Control
 ## sipariş numarası -> { "card", "bar", "counts": {ürün: Label}, "button" }
 var _cards := {}
 var _bar_styles: Array[StyleBoxFlat] = []
 
 
+## Fiş varken şeridin yüksekliği; boşken tek satırlık bilgi kartı kadar küçülür.
+const CARDS_HEIGHT := 250
+const EMPTY_HEIGHT := 84
+
+
 func _ready() -> void:
-	custom_minimum_size = Vector2(0, 236)
+	custom_minimum_size = Vector2(0, CARDS_HEIGHT)
 	vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	_row = HBoxContainer.new()
 	_row.add_theme_constant_override("separation", 10)
 	add_child(_row)
-	_empty = UiKit.label("Açık sipariş yok. Kasadaki müşteriye dokunup siparişini al.", 21, UiKit.MUTED)
-	_empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_empty.custom_minimum_size = Vector2(600, 0)
+	_empty = _empty_card()
 	_row.add_child(_empty)
 	for color in [UiKit.RED, UiKit.YELLOW, UiKit.GREEN]:
 		_bar_styles.append(UiKit.flat(color, 6, 0))
@@ -59,8 +62,29 @@ func _rebuild() -> void:
 		(_cards[number]["card"] as Control).queue_free()
 	_cards.clear()
 	_empty.visible = shop.orders.is_empty()
+	custom_minimum_size.y = EMPTY_HEIGHT if shop.orders.is_empty() else CARDS_HEIGHT
 	for order in shop.orders:
 		_cards[order["number"]] = _make_card(order)
+
+
+## Sipariş yokken: ikon ve ne yapılacağını söyleyen tek satır.
+func _empty_card() -> Control:
+	var card := PanelContainer.new()
+	var style := UiKit.flat(Color("#fbf6ef"), 18, 12)
+	style.border_color = Color("#efe4d6")
+	style.set_border_width_all(2)
+	card.add_theme_stylebox_override("panel", style)
+	card.custom_minimum_size = Vector2(640, 0)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	card.add_child(row)
+	row.add_child(UiKit.icon_rect("receipt", UiKit.MUTED, 34))
+	var text := "Sipariş yok • Kasadaki müşteriye dokun, siparişini al" if mode == Mode.SHOP else "Fiş yok • Kasada sipariş alınınca burada görünür"
+	var label := UiKit.label(text, 20, UiKit.MUTED)
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(label)
+	return card
 
 
 func _make_card(order: Dictionary) -> Dictionary:
@@ -77,6 +101,18 @@ func _make_card(order: Dictionary) -> Dictionary:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
 	card.add_child(v)
+
+	# Durum etiketi: mutfakta hazırlanıyor / teslime hazır
+	var status := PanelContainer.new()
+	var status_color := UiKit.GREEN if ready else UiKit.ORANGE
+	status.add_theme_stylebox_override("panel", UiKit.flat(status_color, 12, 4))
+	v.add_child(status)
+	var status_row := HBoxContainer.new()
+	status_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	status_row.add_theme_constant_override("separation", 6)
+	status.add_child(status_row)
+	status_row.add_child(UiKit.icon_rect("check" if ready else "chef-hat", Color.WHITE, 18))
+	status_row.add_child(UiKit.label("HAZIR" if ready else "HAZIRLANIYOR", 16, Color.WHITE, 900))
 
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 6)
@@ -143,7 +179,7 @@ func _make_card(order: Dictionary) -> Dictionary:
 	v.add_child(button)
 
 	# Yeni fiş hafifçe zıplayarak gelir.
-	card.pivot_offset = Vector2(98, 110)
+	card.pivot_offset = Vector2(98, 125)
 	card.scale = Vector2(0.9, 0.9)
 	card.create_tween().tween_property(card, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	return { "card": card, "bar": bar, "counts": counts, "button": button }

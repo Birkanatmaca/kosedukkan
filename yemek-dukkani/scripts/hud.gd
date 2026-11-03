@@ -18,6 +18,10 @@ var main: Main
 
 var _root: Control
 var _portraits := PortraitStudio.new()
+## Dükkan panelindeki sayaçlar: sırada / hazırlanıyor / hazır
+var _sum_queue: Label
+var _sum_cooking: Label
+var _sum_ready: Label
 var _world_ui: Control
 var _money: Label
 var _rating_btn: Button
@@ -146,6 +150,7 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	_avoid_keyboard()
+	_refresh_summary()
 	var on_shop := main.screen == Main.SHOP and not main.transitioning and not main.register_focus
 	var on_kitchen := main.screen == Main.KITCHEN and not main.transitioning
 
@@ -757,12 +762,21 @@ func _add_gauge(slot: CookSlot) -> void:
 	_gauges.append(gauge)
 
 
+## Dükkan paneli: başlıkta sıra / hazırlanıyor / hazır sayaçları, altında fişler.
 func _build_shop_panel() -> Control:
 	var panel := _bottom_panel()
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
 	panel.add_child(box)
-	box.add_child(_heading("Siparişler", "Kasadaki müşteriye dokun: sipariş al. Hazır olanı teslim et."))
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
+	box.add_child(head)
+	var title := UiKit.label("Siparişler", 30, UiKit.TEXT, 900)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	_sum_queue = _summary_chip(head, "users", UiKit.BLUE)
+	_sum_cooking = _summary_chip(head, "chef-hat", UiKit.ORANGE)
+	_sum_ready = _summary_chip(head, "check", UiKit.GREEN)
 	var strip := TicketStrip.new()
 	strip.mode = TicketStrip.Mode.SHOP
 	strip.shop = main.shop
@@ -872,6 +886,37 @@ func _build_reviews() -> void:
 
 
 # --- Yardımcı parçalar --------------------------------------------------------
+
+## Başlıktaki küçük sayaç: renkli zemin üstünde ikon ve sayı.
+func _summary_chip(parent: Control, icon: String, color: Color) -> Label:
+	var chip := PanelContainer.new()
+	var style := UiKit.flat(color.lightened(0.82), 16, 6)
+	style.content_margin_left = 10
+	style.content_margin_right = 12
+	chip.add_theme_stylebox_override("panel", style)
+	parent.add_child(chip)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	chip.add_child(row)
+	row.add_child(UiKit.icon_rect(icon, color, 22))
+	var count := UiKit.label("0", 22, color.darkened(0.25), 900)
+	row.add_child(count)
+	return count
+
+
+## Sayaçlar: kasada/sırada bekleyen, mutfakta hazırlanan, teslime hazır sipariş.
+func _refresh_summary() -> void:
+	var cooking := 0
+	var ready := 0
+	for order in main.shop.orders:
+		if order["ready"]:
+			ready += 1
+		else:
+			cooking += 1
+	_sum_queue.text = str(main.shop.waiting_count())
+	_sum_cooking.text = str(cooking)
+	_sum_ready.text = str(ready)
+
 
 func _heading(title: String, hint: String) -> Control:
 	var box := VBoxContainer.new()
@@ -1130,8 +1175,12 @@ func _sync_pickup_cards() -> void:
 
 
 ## Teslimde bahşiş çıkarsa müşterinin üstünde gösterilir.
+## Bahşiş teslimde (müşteri puan verince) gelir: kavanoz dolar, para uçar.
 func _on_delivered(customer: ShopCustomer, tip: int) -> void:
-	if tip <= 0 or main.screen != Main.SHOP:
+	if tip <= 0:
+		return
+	main.shop.register.add_tip(tip)
+	if main.screen != Main.SHOP:
 		return
 	var p := main.camera.unproject_position(customer.global_position + Vector3(0, 1.9, 0))
 	_popup(p, "Bahşiş +₺%d" % tip, Color("#f2b33c"), 44, 0.0)
@@ -1296,8 +1345,6 @@ func _on_payment_finished(customer: ShopCustomer, _loss: int) -> void:
 	var reg := main.shop.register
 	reg.close_drawer()
 	reg.show_thanks()
-	if customer.sale_tip > 0:
-		reg.add_tip(customer.sale_tip)
 	# Satış efekti kasada görünsün, sonra kamera salona döner.
 	get_tree().create_timer(1.8).timeout.connect(main.focus_register.bind(false))
 
