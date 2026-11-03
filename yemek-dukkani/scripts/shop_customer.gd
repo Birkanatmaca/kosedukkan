@@ -11,7 +11,8 @@ signal returned_tray(customer: ShopCustomer)
 
 ## QUEUED: kasa doluyken koridordaki sırada bekliyor.
 ## WAIT_TABLE: tepsisiyle boş masa bekliyor. RETURNING: masa bulamayıp tepsiyi geri getiriyor.
-enum State { ARRIVING, WAITING, PAYING, TO_SEAT, EATING, LEAVING, QUEUED, WAIT_TABLE, RETURNING }
+## ORDERED: siparişini verip ödedi, numarasıyla teslim alanında yemeğini bekliyor.
+enum State { ARRIVING, WAITING, PAYING, TO_SEAT, EATING, LEAVING, QUEUED, WAIT_TABLE, RETURNING, ORDERED }
 
 const SHIRTS := [Color("#e05d5d"), Color("#4b8fe0"), Color("#5dbb63"), Color("#9b6ad6"), Color("#e0a33d"), Color("#3fb8b0")]
 const SKINS := [Color("#f5d2b8"), Color("#e8b48f"), Color("#c68863"), Color("#8d5a3c")]
@@ -38,6 +39,14 @@ var pending_review := []
 ## Kasada ödenecek tutar ve bahşiş
 var sale_price := 0
 var sale_tip := 0
+## Sipariş numarası ve yemeğini bekleme sabrı (teslim alanında azalır)
+var order_number := 0
+var food_patience := 0.0
+var max_food_patience := 1.0
+## Kasadan ayrılırken sabrının ne kadarı kalmıştı (puana etki eder)
+var counter_wait_ratio := 1.0
+## Siparişini paket alıp masaya oturmadan çıkacak mı
+var takeaway := false
 ## { "pos": Vector3, "table": Dictionary }
 var seat := {}
 ## Masadaki tepsi (yedikçe içindeki ürünler küçülür)
@@ -149,6 +158,8 @@ func _process(delta: float) -> void:
 	match state:
 		State.WAITING, State.QUEUED:
 			patience -= delta
+		State.ORDERED:
+			food_patience -= delta
 		State.WAIT_TABLE:
 			table_wait -= delta
 	_update_mood()
@@ -162,14 +173,16 @@ func _update_mood() -> void:
 		new_mood = _mood_for(patience / max_patience)
 	elif state == State.WAIT_TABLE:
 		new_mood = _mood_for(table_wait / TABLE_WAIT_TIME)
+	elif state == State.ORDERED:
+		new_mood = _mood_for(food_patience / max_food_patience)
 	elif not pending_review.is_empty():
 		# Servisten sonra yüzü verdiği puanı yansıtır.
 		var stars: int = pending_review[0]
 		new_mood = PersonBody.Mood.HAPPY if stars >= 4 else (PersonBody.Mood.NEUTRAL if stars == 3 else PersonBody.Mood.ANGRY)
 	_body.set_mood(new_mood)
 
-	# Tezgâhta beklerken ikon sipariş kartında görünür.
-	_icon.visible = state != State.WAITING and state != State.PAYING
+	# Kasada ve teslim alanında beklerken ikon kartta görünür.
+	_icon.visible = state != State.WAITING and state != State.PAYING and state != State.ORDERED
 	_icon.texture = mood_icon()
 	if _body.mood == PersonBody.Mood.ANGRY:
 		_icon.position.y = 2.0 + absf(sin(_t * 6.0)) * 0.08

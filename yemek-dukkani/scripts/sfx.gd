@@ -11,6 +11,8 @@ var _players: Array[AudioStreamPlayer] = []
 
 
 func _ready() -> void:
+	# Oyun durdurulsa da sesler ve kayıt çalışsın.
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	for i in VOICES:
 		var player := AudioStreamPlayer.new()
 		add_child(player)

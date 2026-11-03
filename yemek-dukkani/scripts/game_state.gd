@@ -269,7 +269,11 @@ func record_sale(amount: int, tip: int) -> void:
 	day_stats["served"] += 1
 
 
-## Masa bulamayan müşteriye para iadesi: satış geri alınır.
+func record_tip(tip: int) -> void:
+	day_stats["tips"] += tip
+
+
+## Masa bulamayan ya da siparişi gecikene para iadesi: satış geri alınır.
 func record_refund(amount: int) -> void:
 	day_stats["revenue"] -= amount
 	day_stats["served"] -= 1

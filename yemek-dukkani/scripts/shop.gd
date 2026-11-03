@@ -12,6 +12,9 @@ signal customer_added(customer: ShopCustomer)
 signal customer_removed(customer: ShopCustomer)
 signal payment_requested(customer: ShopCustomer, amount: int)
 signal sale_completed(customer: ShopCustomer, amount: int, tip: int)
+signal order_placed(order: Dictionary)
+signal orders_changed
+signal order_delivered(customer: ShopCustomer, tip: int)
 
 const SPOTS := [Vector3(-1.5, 0, -0.4), Vector3(0, 0, -0.6), Vector3(1.5, 0, -0.4)]
 const DOOR := Vector3(0, 0, -9.9)
@@ -37,6 +40,11 @@ const LANE_OFFSET := 1.05
 const NAMES := ["Ayşe", "Mehmet", "Zeynep", "Can", "Elif", "Burak", "Selin", "Emre", "Deniz", "Ece", "Kerem", "Defne", "Mert", "Ada"]
 ## Masa bulamayan müşteri bu masanın ucunda (önünde, dış tarafta) ayakta bekler.
 const STAND_OFFSET := Vector3(0.5, 0, 0.78)
+## Teslim alanı: sipariş verip numarasıyla bekleyenlerin durduğu yerler (kasanın iki yanı).
+const PICKUP_WAIT := [
+	Vector3(-2.1, 0, -1.05), Vector3(2.1, 0, -1.05), Vector3(-2.9, 0, -1.2),
+	Vector3(2.9, 0, -1.2), Vector3(-2.5, 0, -1.8), Vector3(2.5, 0, -1.8),
+]
 
 ## Kasanın önündeki 3 yer
 var spots: Array = [null, null, null]
@@ -46,11 +54,16 @@ var queue: Array[ShopCustomer] = []
 var tables: Array[Dictionary] = []
 ## Masa ucunda ayakta bekleyenler (TABLES ile aynı sırada; boşsa null)
 var standing: Array = [null, null, null, null, null, null]
+## Açık siparişler (fişler): { number, customer, items, filled: {ürün: [kalite]}, ready }
+var orders: Array[Dictionary] = []
+## Teslim alanında bekleyenler (PICKUP_WAIT ile aynı sırada; boşsa null)
+var pickup_wait: Array = [null, null, null, null, null, null]
 ## Kasada ödemesi alınan müşteri (aynı anda tek ödeme).
 var paying: ShopCustomer
 var register: CashRegister
 
 var _spawn_timer := 2.0
+var _next_number := 1
 var _workers: Array[Worker] = []
 # Dekor parçaları (kurulumda değişir)
 var _wall_mat: StandardMaterial3D
@@ -76,6 +89,8 @@ func _ready() -> void:
 	GameState.decor_changed.connect(_apply_decor)
 	GameState.setup_finished.connect(_apply_decor)
 	GameState.staff_changed.connect(_sync_staff)
+	# Sipariş numaraları her gün 1'den başlar.
+	GameState.day_started.connect(func(_day: int) -> void: _next_number = 1)
 
 
 func _process(delta: float) -> void:
@@ -85,9 +100,9 @@ func _process(delta: float) -> void:
 		if GameState.tutorial_active():
 			# Tanıtımda tek müşteri gelir, o çıkınca sıradaki.
 			_spawn_timer = 1.0
-			if GameState.tutorial_step <= 6 and _customer_count() == 0 and GameState.accepting_customers():
+			if GameState.tutorial_step <= 8 and _customer_count() == 0 and GameState.accepting_customers():
 				_spawn()
-		elif GameState.accepting_customers() and _customer_count() < Progression.max_customers():
+		elif GameState.accepting_customers() and _customer_count() < Progression.max_customers(GameState.level) and orders.size() < Progression.max_orders(GameState.level):
 			# Kasada boş yer varsa doğrudan oraya, yoksa sıra sınırına kadar sıraya.
 			var counter_free := spots.has(null) and queue.is_empty()
 			if counter_free or queue.size() < Progression.max_queue(GameState.level):
@@ -114,9 +129,13 @@ func _process(delta: float) -> void:
 	for customer in queue.duplicate():
 		if customer.patience <= 0.0:
 			_leave_angry(customer)
+	for order in orders.duplicate():
+		var customer: ShopCustomer = order["customer"]
+		if customer.state == ShopCustomer.State.ORDERED and customer.food_patience <= 0.0:
+			_order_timeout(order)
 
 
-## Kasada ya da sırada bekleyen müşteri sayısı.
+## Kasada ya da sırada sipariş vermeyi bekleyen müşteri sayısı.
 func waiting_count() -> int:
 	var count := queue.size()
 	for customer in spots:
@@ -125,69 +144,184 @@ func waiting_count() -> int:
 	return count
 
 
-## Siparişin tamamı hazırsa servis eder. Eksik varsa bildirim gösterir.
-func serve(customer: ShopCustomer) -> bool:
+## Henüz hazırlanmamış (tepsisi dolmamış) sipariş sayısı.
+func open_order_count() -> int:
+	var count := 0
+	for order in orders:
+		if not order["ready"]:
+			count += 1
+	return count
+
+
+## Müşteriye dokununca: kasadaysa siparişini al, teslim bekliyorsa ve hazırsa teslim et.
+func _on_customer_tapped(customer: ShopCustomer) -> void:
+	if customer.state == ShopCustomer.State.WAITING:
+		take_order(customer)
+	elif customer.state == ShopCustomer.State.ORDERED:
+		var order := order_of(customer)
+		if not order.is_empty():
+			deliver(order)
+
+
+func order_of(customer: ShopCustomer) -> Dictionary:
+	for order in orders:
+		if order["customer"] == customer:
+			return order
+	return {}
+
+
+## Kasada siparişi alır ve ödemeyi başlatır. Ürünlerin hazır olması gerekmez.
+func take_order(customer: ShopCustomer) -> bool:
 	if customer.state != ShopCustomer.State.WAITING:
 		return false
 	if paying:
 		GameState.show_toast("Önce kasadaki ödemeyi tamamla")
 		return false
-	var missing: Array[String] = []
-	for id in customer.order:
-		if GameState.available(id) < int(customer.order[id]):
-			missing.append(Items.display_name(id))
-	if not missing.is_empty():
-		GameState.show_toast("Eksik: " + ", ".join(missing))
+	if pickup_wait.find(null) == -1:
+		GameState.show_toast("Teslim alanı dolu! Önce hazır siparişleri teslim et")
+		Sfx.play("error")
 		return false
-
 	var price := 0
-	var quality_sum := 0
-	var under: Array[String] = []
-	var over: Array[String] = []
-	var served: Array[Array] = []
 	for id in customer.order:
-		for i in int(customer.order[id]):
-			var quality := GameState.take_for_order(id)
-			served.append([id, quality])
-			quality_sum += quality
-			price += int(Items.PRODUCTS[id]["price"])
-			if quality == 2 and not under.has(Items.display_name(id)):
-				under.append(Items.display_name(id))
-			elif quality == 3 and not over.has(Items.display_name(id)):
-				over.append(Items.display_name(id))
-
-	var wait_ratio := customer.patience / customer.max_patience
-	var stars := roundi(float(quality_sum) / customer.item_count())
-	if wait_ratio < 0.25:
-		stars -= 1
-	stars = clampi(stars, 1, 5)
+		price += int(Items.PRODUCTS[id]["price"]) * int(customer.order[id])
 	customer.sale_price = price
-	customer.sale_tip = roundi(price * 0.2) if stars == 5 else 0
-	customer.served_items = served
-	customer.pending_review = [stars, _review_text(stars, wait_ratio, under, over)]
+	customer.counter_wait_ratio = customer.patience / customer.max_patience
 	customer.state = ShopCustomer.State.PAYING
 	paying = customer
 	payment_requested.emit(customer, price)
 	return true
 
 
-## Kasa ödemeyi bitirince çağrılır. loss: fazladan verilen paraüstü.
+## Kasa ödemeyi bitirince: müşteri sipariş numarasını alır, teslim alanına geçer,
+## mutfakta fişi açılır. loss: fazladan verilen paraüstü.
 func complete_payment(customer: ShopCustomer, loss: int) -> void:
 	paying = null
-	GameState.money += customer.sale_price + customer.sale_tip - loss
+	GameState.money += customer.sale_price - loss
 	if loss > 0:
 		GameState.show_toast("₺%d fazla paraüstü verdin!" % loss)
-	sale_completed.emit(customer, customer.sale_price, customer.sale_tip)
-	GameState.record_sale(customer.sale_price, customer.sale_tip)
-	GameState.add_xp(Progression.sale_xp(customer.item_count(), customer.pending_review[0]))
+	sale_completed.emit(customer, customer.sale_price, 0)
+	GameState.record_sale(customer.sale_price, 0)
 
-	# Tepsi kasanın yanına konur; müşteri teslim noktasına gelip alır.
-	var tray := _make_tray(customer.served_items)
+	var order := { "number": _next_number, "customer": customer, "items": customer.order.duplicate(), "filled": {}, "ready": false }
+	_next_number += 1
+	for id in order["items"]:
+		order["filled"][id] = []
+	orders.append(order)
+	customer.order_number = order["number"]
+	customer.max_food_patience = Progression.food_patience(GameState.level, customer.item_count()) * (1.0 + Decor.patience_bonus(GameState.decor))
+	if GameState.tutorial_active():
+		customer.max_food_patience = 9999.0
+	customer.food_patience = customer.max_food_patience
+	customer.state = ShopCustomer.State.ORDERED
+
+	_release_spot(customer)
+	var spot := pickup_wait.find(null)
+	pickup_wait[spot] = customer
+	customer.follow([PICKUP_WAIT[spot]], 0.0)
+	order_placed.emit(order)
+	orders_changed.emit()
+
+
+## Mutfakta fişin tepsisine hazır ürünleri koyar; tamamlanınca fiş "hazır" olur.
+func fill_order(order: Dictionary) -> void:
+	if order["ready"]:
+		return
+	var placed := 0
+	for id in order["items"]:
+		var filled: Array = order["filled"][id]
+		while filled.size() < int(order["items"][id]) and GameState.available(id) > 0:
+			filled.append(GameState.take_for_order(id))
+			placed += 1
+	var complete := true
+	for id in order["items"]:
+		if (order["filled"][id] as Array).size() < int(order["items"][id]):
+			complete = false
+	order["ready"] = complete
+	if complete:
+		Sfx.play("approve")
+		GameState.show_toast("#%d hazır! Dükkanda teslim et" % order["number"])
+	elif placed > 0:
+		Sfx.play("pop")
+	else:
+		Sfx.play("error")
+		GameState.show_toast("Önce eksik ürünleri pişir")
+	orders_changed.emit()
+
+
+## Hazır siparişi müşteriye teslim eder: tepsi kasanın yanına konur, müşteri alıp masasına gider.
+func deliver(order: Dictionary) -> void:
+	var customer: ShopCustomer = order["customer"]
+	if not order["ready"]:
+		GameState.show_toast("#%d henüz hazır değil" % order["number"])
+		Sfx.play("error")
+		return
+	if customer.state != ShopCustomer.State.ORDERED:
+		return
+
+	var served: Array[Array] = []
+	var quality_sum := 0
+	var under: Array[String] = []
+	var over: Array[String] = []
+	for id in order["filled"]:
+		for quality in order["filled"][id]:
+			served.append([id, quality])
+			quality_sum += quality
+			if quality == 2 and not under.has(Items.display_name(id)):
+				under.append(Items.display_name(id))
+			elif quality == 3 and not over.has(Items.display_name(id)):
+				over.append(Items.display_name(id))
+	# Puan: ürün kalitesi; kasada ya da teslimde çok beklediyse bir yıldız düşer.
+	var wait_ratio := minf(customer.counter_wait_ratio, customer.food_patience / customer.max_food_patience)
+	var stars := roundi(float(quality_sum) / served.size())
+	if wait_ratio < 0.25:
+		stars -= 1
+	stars = clampi(stars, 1, 5)
+	var tip := roundi(customer.sale_price * 0.2) if stars == 5 else 0
+	customer.sale_tip = tip
+	if tip > 0:
+		GameState.money += tip
+		GameState.record_tip(tip)
+	GameState.add_xp(Progression.sale_xp(served.size(), stars))
+	customer.served_items = served
+	customer.pending_review = [stars, _review_text(stars, wait_ratio, under, over)]
+
+	orders.erase(order)
+	pickup_wait[pickup_wait.find(customer)] = null
+	orders_changed.emit()
+	order_delivered.emit(customer, tip)
+	Sfx.play("kaching")
+
+	# Tepsi kasanın yanına konur; müşteri gelip alır.
+	customer.state = ShopCustomer.State.PAYING
+	var tray := _make_bag() if customer.takeaway else _make_tray(served)
 	add_child(tray)
 	tray.position = TRAY_SPOT
 	customer.follow([PICKUP_SPOT], 0.0)
-	var delay := maxf(0.35 + 0.18 * customer.served_items.size(), 0.9) + 0.25
-	get_tree().create_timer(delay).timeout.connect(_pick_up.bind(customer, tray))
+	var walk := Vector2(customer.position.x - PICKUP_SPOT.x, customer.position.z - PICKUP_SPOT.z).length() / ShopCustomer.SPEED
+	get_tree().create_timer(maxf(walk + 0.3, 0.35 + 0.18 * served.size())).timeout.connect(_pick_up.bind(customer, tray))
+
+
+## Sipariş zamanında teslim edilmedi: para iade, hazırlanmış ürünler geri, kötü yorum.
+func _order_timeout(order: Dictionary) -> void:
+	var customer: ShopCustomer = order["customer"]
+	for id in order["filled"]:
+		for quality in order["filled"][id]:
+			if GameState.prepared.has(id):
+				GameState.add_prepared(id, quality)
+			else:
+				GameState.stock[id] += 1
+				GameState.stock_changed.emit()
+	GameState.money -= customer.sale_price
+	GameState.record_refund(customer.sale_price)
+	GameState.record_lost_customer()
+	GameState.add_review(1, "Siparişim çok gecikti, paramı geri aldım.", customer.customer_name)
+	GameState.show_toast("#%d çok gecikti! %s ₺%d iade aldı" % [order["number"], customer.customer_name, customer.sale_price])
+	Sfx.play("error")
+	customer.angry = true
+	orders.erase(order)
+	pickup_wait[pickup_wait.find(customer)] = null
+	orders_changed.emit()
+	customer.leave(_exit_path(customer.position, signf(customer.position.x)))
 
 
 ## Müşteri tepsiyi alır; temiz ve boş masa varsa oturmaya, yoksa ayakta beklemeye gider.
@@ -197,6 +331,11 @@ func _pick_up(customer: ShopCustomer, tray: Node3D) -> void:
 		return
 	customer.take(tray)
 	_release_spot(customer)
+	if customer.takeaway:
+		# Paket servis: masaya oturmaz, yorumunu bırakıp poşetiyle çıkar.
+		_post_review(customer)
+		customer.leave(_exit_path(customer.position, [-1.0, 1.0].pick_random()))
+		return
 	if _reserve_table(customer):
 		_send_to_seat(customer, customer.position)
 		return
@@ -299,13 +438,14 @@ func _spawn() -> void:
 	var customer := ShopCustomer.new()
 	customer.customer_name = NAMES.pick_random()
 	customer.order = Progression.random_order(GameState.level)
+	customer.takeaway = randf() < Progression.takeaway_chance(GameState.level)
 	customer.max_patience = Progression.patience(GameState.level, customer.item_count(), GameState.upgrade_level("comfort"))
 	customer.max_patience *= 1.0 + Decor.patience_bonus(GameState.decor)
 	if GameState.tutorial_active():
 		# Tanıtım müşterisi tek köfte ister ve sabrı tükenmez.
 		customer.order = { "kofte": 1 }
 		customer.max_patience = 9999.0
-	customer.tap = serve.bind(customer)
+	customer.tap = _on_customer_tapped.bind(customer)
 	customer.sat_down.connect(_on_sat_down)
 	customer.finished_eating.connect(_on_finished_eating)
 	add_child(customer)
@@ -341,6 +481,19 @@ func _reserve_table(customer: ShopCustomer) -> bool:
 
 
 ## Tepsi: ürünler tabaklarda, tek tek "pop" diye konur.
+## Paket servis poşeti (dükkanın adı üstünde).
+func _make_bag() -> Node3D:
+	var bag := Node3D.new()
+	bag.add_child(Util.box(Vector3(0.26, 0.3, 0.17), Color("#c8a06a"), Vector3(0, 0.15, 0)))
+	bag.add_child(Util.box(Vector3(0.27, 0.05, 0.18), Color("#a8814f"), Vector3(0, 0.3, 0)))
+	var tag := Util.label3d(GameState.shop_name.to_upper(), 30, Color("#e8553e"), Vector3(0, 0.17, 0.087))
+	tag.pixel_size = 0.0018
+	bag.add_child(tag)
+	bag.scale = Vector3.ONE * 0.01
+	bag.create_tween().tween_property(bag, "scale", Vector3.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	return bag
+
+
 func _make_tray(served_items: Array[Array]) -> Node3D:
 	var tray := Node3D.new()
 	tray.add_child(Util.box(Vector3(0.54, 0.025, 0.36), Color("#b5452f"), Vector3(0, 0.0125, 0)))

@@ -51,6 +51,9 @@ var _nav_kitchen_icon := ""
 var _setup: SetupUI
 var _tutorial: TutorialUI
 var _settings: SettingsUI
+var _pause_overlay: ColorRect
+## sipariş numarası -> teslim bekleyen müşterinin kartı
+var _pickup_cards := {}
 
 
 func setup(m: Main) -> void:
@@ -58,6 +61,8 @@ func setup(m: Main) -> void:
 
 
 func _ready() -> void:
+	# Oyun durdurulunca da arayüz çalışsın (Devam Et butonu vb.).
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Yiyecek ikonları 3D modellerden çekilir; paneller kurulmadan önce hazır olmalı.
 	add_child(FoodStudio.new())
 	# Sonradan eklenenler dahil tüm butonlara basma animasyonu ve tık sesi.
@@ -107,6 +112,9 @@ func _ready() -> void:
 	GameState.toast_requested.connect(show_toast)
 	main.shop.customer_added.connect(_add_card)
 	main.shop.customer_removed.connect(_remove_card)
+	main.shop.order_placed.connect(_add_pickup_card)
+	main.shop.orders_changed.connect(_sync_pickup_cards)
+	main.shop.order_delivered.connect(_on_delivered)
 	main.screen_changed.connect(_on_screen_changed)
 	GameState.xp_changed.connect(_refresh_level)
 	GameState.level_up.connect(_on_level_up)
@@ -134,6 +142,9 @@ func _process(_delta: float) -> void:
 
 	for customer in _cards:
 		_update_card(customer, _cards[customer], on_shop)
+	for order in main.shop.orders:
+		if _pickup_cards.has(order["number"]):
+			_update_pickup_card(order, _pickup_cards[order["number"]], on_shop)
 	var waiting := main.shop.waiting_count()
 
 	var cooked := false
@@ -147,6 +158,8 @@ func _process(_delta: float) -> void:
 
 	_set_text(_nav[Main.SHOP], NAV_TEXT[Main.SHOP] + (" (%d)" % waiting if waiting > 0 else ""))
 	# Pişen bir şey varsa mutfak ikonu aleve döner.
+	var open_orders := main.shop.open_order_count()
+	_set_text(_nav[Main.KITCHEN], NAV_TEXT[Main.KITCHEN] + (" (%d)" % open_orders if open_orders > 0 else ""))
 	var kitchen_icon := "flame" if cooked else NAV_ICONS[Main.KITCHEN]
 	if _nav_kitchen_icon != kitchen_icon:
 		_nav_kitchen_icon = kitchen_icon
@@ -165,7 +178,7 @@ func _process(_delta: float) -> void:
 		_sky_name = sky
 		_sky_icon.texture = Icons.tex(sky, 48)
 		_sky_icon.modulate = sky_color
-	var clock := "Sv %d  •  Gün %d  •  %s" % [GameState.level, GameState.day, GameState.clock_text()]
+	var clock := "Sv%d • G%d • %s" % [GameState.level, GameState.day, GameState.clock_text()]
 	if _level_label.text != clock:
 		_level_label.text = clock
 
@@ -198,9 +211,9 @@ func _build_top_bar() -> void:
 	var row := HBoxContainer.new()
 	bar.add_child(row)
 	row.add_theme_constant_override("separation", 10)
-	row.add_child(UiKit.badge_rect("coins", UiKit.YELLOW, 48))
+	row.add_child(UiKit.badge_rect("coins", UiKit.YELLOW, 42))
 	_money = Label.new()
-	_money.add_theme_font_size_override("font_size", 38)
+	_money.add_theme_font_size_override("font_size", 34)
 	_money.add_theme_font_override("font", UiKit.font(900))
 	row.add_child(_money)
 
@@ -218,24 +231,31 @@ func _build_top_bar() -> void:
 	clock_row.add_child(_sky_icon)
 	_level_label = Label.new()
 	_level_label.add_theme_color_override("font_color", C_MUTED)
-	_level_label.add_theme_font_size_override("font_size", 21)
+	_level_label.add_theme_font_size_override("font_size", 18)
 	clock_row.add_child(_level_label)
 	_xp_bar = ProgressBar.new()
 	_xp_bar.show_percentage = false
-	_xp_bar.custom_minimum_size = Vector2(200, 12)
+	_xp_bar.custom_minimum_size = Vector2(130, 10)
 	_xp_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_xp_bar.add_theme_stylebox_override("fill", UiKit.flat(UiKit.PURPLE, 8, 0))
 	level_box.add_child(_xp_bar)
 
+	var pause := Button.new()
+	pause.custom_minimum_size = Vector2(56, 0)
+	UiKit.set_icon(pause, "pause", 30)
+	UiKit.candy(pause, UiKit.NEUTRAL, UiKit.TEXT)
+	pause.pressed.connect(set_paused.bind(true))
+	row.add_child(pause)
+
 	var gear := Button.new()
-	gear.custom_minimum_size = Vector2(64, 0)
+	gear.custom_minimum_size = Vector2(56, 0)
 	UiKit.set_icon(gear, "settings", 30)
 	UiKit.candy(gear, UiKit.NEUTRAL, UiKit.TEXT)
 	gear.pressed.connect(open_settings)
 	row.add_child(gear)
 
 	_rating_btn = Button.new()
-	_rating_btn.add_theme_font_size_override("font_size", 26)
+	_rating_btn.add_theme_font_size_override("font_size", 24)
 	UiKit.set_icon(_rating_btn, "star", 30)
 	_style_button(_rating_btn, UiKit.YELLOW, C_TEXT)
 	_rating_btn.pressed.connect(func() -> void: _reviews_overlay.visible = true)
@@ -711,8 +731,11 @@ func _build_shop_panel() -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
 	panel.add_child(box)
-	box.add_child(_heading("Servise hazır", "Müşteriye dokun ya da Servis Et'e bas"))
-	box.add_child(_ready_bar())
+	box.add_child(_heading("Siparişler", "Kasadaki müşteriye dokun: sipariş al. Hazır olanı teslim et."))
+	var strip := TicketStrip.new()
+	strip.mode = TicketStrip.Mode.SHOP
+	strip.shop = main.shop
+	box.add_child(strip)
 	return panel
 
 
@@ -721,7 +744,7 @@ func _build_kitchen_panel() -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
 	panel.add_child(box)
-	box.add_child(_heading("Pişir", "Malzeme seç, kıvamı yeşildeyken ürüne dokun"))
+	box.add_child(_heading("Pişir", "Kıvamı yeşildeyken ürüne dokun, sonra fişin tepsisine koy"))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	box.add_child(row)
@@ -729,12 +752,12 @@ func _build_kitchen_panel() -> Control:
 		if Items.PRODUCTS[id]["device"] == "":
 			continue
 		var btn := Button.new()
-		btn.custom_minimum_size = Vector2(0, 150)
+		btn.custom_minimum_size = Vector2(0, 132)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.add_theme_font_size_override("font_size", 23)
 		btn.icon = Icons.food(id)
 		btn.expand_icon = false
-		btn.add_theme_constant_override("icon_max_width", 84)
+		btn.add_theme_constant_override("icon_max_width", 64)
 		btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
 		btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_style_button(btn, Color("#ffe6d2"), C_TEXT)
@@ -744,7 +767,10 @@ func _build_kitchen_panel() -> Control:
 		btn.pressed.connect(main.kitchen.add_ingredient.bind(id))
 		row.add_child(btn)
 		_kitchen_buttons[id] = btn
-	box.add_child(_ready_bar())
+	var strip := TicketStrip.new()
+	strip.mode = TicketStrip.Mode.KITCHEN
+	strip.shop = main.shop
+	box.add_child(strip)
 	return panel
 
 
@@ -927,11 +953,11 @@ func _add_card(customer: ShopCustomer) -> void:
 	box.add_child(bar)
 
 	var btn := Button.new()
-	btn.text = "Servis Et"
+	btn.text = "Sipariş Al"
 	btn.add_theme_font_size_override("font_size", 22)
-	UiKit.set_icon(btn, "utensils", 26)
-	_style_button(btn, C_GREEN, Color.WHITE)
-	btn.pressed.connect(func() -> void: main.shop.serve(customer))
+	UiKit.set_icon(btn, "receipt", 26)
+	_style_button(btn, C_ORANGE, Color.WHITE)
+	btn.pressed.connect(func() -> void: main.shop.take_order(customer))
 	box.add_child(btn)
 
 	card.set_meta("bar", bar)
@@ -939,6 +965,92 @@ func _add_card(customer: ShopCustomer) -> void:
 	card.set_meta("labels", labels)
 	_world_ui.add_child(card)
 	_cards[customer] = card
+
+
+## Sipariş veren müşterinin üstünde: numara, bekleme çubuğu, Teslim Et.
+func _add_pickup_card(order: Dictionary) -> void:
+	var card := PanelContainer.new()
+	var style := UiKit.panel_style(20)
+	style.set_content_margin_all(10)
+	card.add_theme_stylebox_override("panel", style)
+	card.custom_minimum_size = Vector2(150, 0)
+	card.visible = false
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	card.add_child(box)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 6)
+	box.add_child(head)
+	var mood := TextureRect.new()
+	mood.custom_minimum_size = Vector2(26, 26)
+	mood.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	mood.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	head.add_child(mood)
+	head.add_child(UiKit.label("#%d" % order["number"], 26, C_TEXT, 900))
+	var bar := ProgressBar.new()
+	bar.max_value = 1.0
+	bar.step = 0.001
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, 10)
+	box.add_child(bar)
+	var btn := Button.new()
+	btn.add_theme_font_size_override("font_size", 19)
+	btn.custom_minimum_size = Vector2(0, 52)
+	btn.pressed.connect(main.shop.deliver.bind(order))
+	box.add_child(btn)
+	card.set_meta("bar", bar)
+	card.set_meta("mood", mood)
+	card.set_meta("button", btn)
+	card.set_meta("ready", "")
+	_world_ui.add_child(card)
+	_pickup_cards[order["number"]] = card
+
+
+func _update_pickup_card(order: Dictionary, card: PanelContainer, on_shop: bool) -> void:
+	var customer: ShopCustomer = order["customer"]
+	card.visible = on_shop and customer.state == ShopCustomer.State.ORDERED
+	if not card.visible:
+		return
+	var p := main.camera.unproject_position(customer.global_position + Vector3(0, 1.9, 0))
+	card.position = p - Vector2(card.size.x * 0.5, card.size.y)
+	var ratio := clampf(customer.food_patience / customer.max_food_patience, 0.0, 1.0)
+	var bar: ProgressBar = card.get_meta("bar")
+	bar.value = ratio
+	bar.add_theme_stylebox_override("fill", _bar_styles[0 if ratio < 0.25 else (1 if ratio < 0.55 else 2)])
+	(card.get_meta("mood") as TextureRect).texture = customer.mood_icon()
+	# Buton sadece hazır olma durumu değişince yeniden boyanır.
+	var ready_state := "hazir" if order["ready"] else "bekliyor"
+	if card.get_meta("ready") != ready_state:
+		card.set_meta("ready", ready_state)
+		var btn: Button = card.get_meta("button")
+		if order["ready"]:
+			btn.text = "Teslim Et"
+			UiKit.set_icon(btn, "hand-platter", 22)
+			UiKit.candy(btn, C_GREEN, Color.WHITE)
+		else:
+			btn.text = "Bekliyor"
+			UiKit.set_icon(btn, "timer", 22)
+			UiKit.candy(btn, UiKit.NEUTRAL, C_TEXT)
+
+
+func _sync_pickup_cards() -> void:
+	var open := {}
+	for order in main.shop.orders:
+		open[order["number"]] = true
+	for number in _pickup_cards.keys():
+		if not open.has(number):
+			(_pickup_cards[number] as Control).queue_free()
+			_pickup_cards.erase(number)
+
+
+## Teslimde bahşiş çıkarsa müşterinin üstünde gösterilir.
+func _on_delivered(customer: ShopCustomer, tip: int) -> void:
+	if tip <= 0 or main.screen != Main.SHOP:
+		return
+	var p := main.camera.unproject_position(customer.global_position + Vector3(0, 1.9, 0))
+	_popup(p, "Bahşiş +₺%d" % tip, Color("#f2b33c"), 44, 0.0)
+	for i in 4:
+		_fly_coin(p + Vector2(randf_range(-30, 30), randf_range(-20, 20)), i * 0.06)
 
 
 func _remove_card(customer: ShopCustomer) -> void:
@@ -959,16 +1071,71 @@ func _update_card(customer: ShopCustomer, card: PanelContainer, on_shop: bool) -
 	bar.value = ratio
 	bar.add_theme_stylebox_override("fill", _bar_styles[0 if ratio < 0.25 else (1 if ratio < 0.55 else 2)])
 
-	var labels: Dictionary = card.get_meta("labels")
-	for id in labels:
-		var ok := GameState.available(id) >= int(customer.order[id])
-		(labels[id] as Label).add_theme_color_override("font_color", C_GREEN if ok else C_TEXT)
 
 	# Ruh hali ikonu isminin önünde
 	(card.get_meta("mood") as TextureRect).texture = customer.mood_icon()
 
 
 # --- Yenileme -----------------------------------------------------------------
+
+## Oyunu durdurur / devam ettirir. Durunca ortada "Durduruldu" penceresi çıkar.
+func set_paused(on: bool) -> void:
+	if on == get_tree().paused or not GameState.setup_done:
+		return
+	get_tree().paused = on
+	if on:
+		_build_pause_overlay()
+	elif _pause_overlay:
+		_pause_overlay.queue_free()
+		_pause_overlay = null
+
+
+func _build_pause_overlay() -> void:
+	_pause_overlay = ColorRect.new()
+	_pause_overlay.color = Color(0.08, 0.05, 0.03, 0.6)
+	_pause_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_root.add_child(_pause_overlay)
+	_root.move_child(_pause_overlay, _toast.get_index())
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_pause_overlay.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(560, 0)
+	center.add_child(panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 16)
+	panel.add_child(v)
+	var badge := UiKit.badge_rect("pause", UiKit.BLUE, 96)
+	badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	v.add_child(badge)
+	var title := UiKit.label("Durduruldu", 44, UiKit.TEXT, 900)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	var hint := UiKit.label("Saat, müşteriler ve ocak bekliyor.", 22, UiKit.MUTED)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(hint)
+	var resume := Button.new()
+	resume.text = "Devam Et"
+	resume.custom_minimum_size = Vector2(0, 92)
+	resume.add_theme_font_size_override("font_size", 32)
+	UiKit.set_icon(resume, "play", 34)
+	UiKit.candy(resume, UiKit.GREEN, Color.WHITE)
+	resume.pressed.connect(set_paused.bind(false))
+	v.add_child(resume)
+	var settings := Button.new()
+	settings.text = "Ayarlar"
+	settings.custom_minimum_size = Vector2(0, 80)
+	UiKit.set_icon(settings, "settings", 30)
+	UiKit.candy(settings, UiKit.NEUTRAL, UiKit.TEXT)
+	settings.pressed.connect(open_settings)
+	v.add_child(settings)
+
+
+## Telefon uygulamayı arka plana alınca oyun kendiliğinden durur.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_PAUSED:
+		set_paused(true)
+
 
 func open_settings() -> void:
 	if _settings and is_instance_valid(_settings):
@@ -1128,7 +1295,7 @@ func _refresh_stock() -> void:
 	for id in _market_stock:
 		(_market_stock[id] as Label).text = "Stok: %d" % GameState.stock[id]
 	for id in _kitchen_buttons:
-		(_kitchen_buttons[id] as Button).text = "%s\nStok %d" % [Items.display_name(id), GameState.stock[id]]
+		(_kitchen_buttons[id] as Button).text = "%s\nStok %d • Hazır %d" % [Items.display_name(id), GameState.stock[id], GameState.available(id)]
 	for labels in _ready_labels:
 		for id in labels:
 			(labels[id] as Label).text = str(GameState.available(id))

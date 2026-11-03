@@ -7,12 +7,14 @@ extends Control
 const C_MUTED := Color("#8a7a72")
 const STEPS := [
 	"Hoş geldin patron! İlk müşterin kapıdan giriyor. Kasaya gelince başının üstündeki kartta ne istediği yazacak.",
-	"Müşteri köfte istiyor. Pişirmek için alttan Mutfak'a geç.",
+	"Müşteri kasada. Kartındaki 'Sipariş Al' butonuna bas.",
+	"Ödemeyi al: kartla öderse 'Kartı Okut'a bas, nakit verirse çekmeceden paraüstünü seçip ver.",
+	"Sipariş alındı! Müşteri numarasıyla bekliyor. Hazırlamak için alttan Mutfak'a geç.",
 	"Alttaki Köfte butonuna dokun, köfte ızgaraya konsun.",
 	"Köfte pişiyor! Üstündeki çubuk YEŞİL olunca köfteye dokunup al. Geç kalırsan yanar!",
-	"Köfte hazır! Şimdi alttan Dükkan'a dön.",
-	"Müşterinin kartındaki 'Servis Et' butonuna bas.",
-	"Ödemeyi al: kartla öderse 'Kartı Okut'a bas, nakit verirse çekmeceden paraüstünü seçip ver.",
+	"Köfte hazır. Aşağıdaki sipariş fişinde 'Tepsiye Koy'a bas.",
+	"Sipariş hazır! Şimdi alttan Dükkan'a dön.",
+	"Müşteri sabırsızlanmadan 'Teslim Et'e bas. Çok bekletirsen parasını geri ister!",
 	"Müşteri tepsisini alıp masasına oturdu. Yemeği bitince masa kirlenir: üstünde sünger işareti olan masaya dokunup temizle.",
 	"Harika iş! Malzemen azalınca Market'ten al, Personel sekmesinden garson tutabilirsin. Gün 22:00'de biter. Bol kazançlar!",
 ]
@@ -79,33 +81,45 @@ func _process(delta: float) -> void:
 ## Adımın tamamlanıp tamamlanmadığı.
 func _check(step: int) -> bool:
 	var main := hud.main
+	var shop := main.shop
 	match step:
 		0:
-			for c in main.shop.spots:
+			for c in shop.spots:
 				if c and c.state == ShopCustomer.State.WAITING:
 					return true
 		1:
-			return main.screen == Main.KITCHEN and not main.transitioning
+			return shop.paying != null
 		2:
+			return not shop.orders.is_empty()
+		3:
+			return main.screen == Main.KITCHEN and not main.transitioning
+		4:
 			for slot in main.kitchen.slots:
 				if not slot.is_empty():
 					return true
-		3:
-			return GameState.available("kofte") > 0
-		4:
-			return main.screen == Main.SHOP and not main.transitioning
 		5:
-			return main.shop.paying != null
+			return GameState.available("kofte") > 0 or _any_ready(shop)
 		6:
-			return GameState.day_stats["served"] > 0
+			return _any_ready(shop)
 		7:
+			return main.screen == Main.SHOP and not main.transitioning
+		8:
+			return shop.orders.is_empty()
+		9:
 			var dirty := false
-			for table in main.shop.tables:
+			for table in shop.tables:
 				if table["dirty"]:
 					dirty = true
 			if dirty:
 				_seen_dirty = true
 			return _seen_dirty and not dirty
+	return false
+
+
+func _any_ready(shop: Shop) -> bool:
+	for order in shop.orders:
+		if order["ready"]:
+			return true
 	return false
 
 
@@ -129,9 +143,9 @@ func _show_step(step: int) -> void:
 func _pulse() -> void:
 	var target: Control = null
 	match GameState.tutorial_step:
-		1: target = hud.nav_button(Main.KITCHEN)
-		2: target = hud.kitchen_button("kofte")
-		4: target = hud.nav_button(Main.SHOP)
+		3: target = hud.nav_button(Main.KITCHEN)
+		4: target = hud.kitchen_button("kofte")
+		7: target = hud.nav_button(Main.SHOP)
 	if _pulsing and _pulsing != target:
 		_pulsing.modulate = Color.WHITE
 	_pulsing = target

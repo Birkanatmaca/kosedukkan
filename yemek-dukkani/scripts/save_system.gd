@@ -20,6 +20,8 @@ var _timer := 0.0
 
 
 func _ready() -> void:
+	# Oyun durdurulsa da sesler ve kayıt çalışsın.
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	enabled = not OS.get_cmdline_args().has("--script")
 	_load_settings()
 	if enabled:

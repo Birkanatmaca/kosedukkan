@@ -49,7 +49,7 @@ func _ready() -> void:
 	_views = [
 		_view(market, Vector3(0, 2.3, 3.6), Vector3(0, 1.0, -1.5)),
 		_view(shop, Vector3(0, 2.5, 3.3), Vector3(0, 0.95, -4.5)),
-		_view(kitchen, Vector3(-0.15, 3.5, 2.0), Vector3(-0.15, 0.95, -0.3)),
+		_view(kitchen, Vector3(-0.15, 3.6, 2.3), Vector3(-0.15, 0.45, 1.0)),
 	]
 	camera = Camera3D.new()
 	camera.keep_aspect = Camera3D.KEEP_WIDTH

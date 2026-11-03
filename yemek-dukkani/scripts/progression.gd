@@ -46,9 +46,45 @@ static func calm() -> bool:
 	return GameState.staff.is_empty()
 
 
-## İçeride aynı anda bulunabilecek en fazla müşteri (sakin dönemde sınırlı).
-static func max_customers() -> int:
-	return CALM_MAX_CUSTOMERS if calm() else 999
+## İçeride aynı anda bulunabilecek en fazla müşteri. Sakin dönemde 3,
+## sonra seviyeyle kademeli artar: Sv1 5, Sv5 7, Sv10 10, en fazla 14.
+static func max_customers(level: int) -> int:
+	if calm():
+		return CALM_MAX_CUSTOMERS
+	return mini(5 + (level - 1) / 2 + maxi(level - 8, 0), 14)
+
+
+## Aynı anda açık olabilecek en fazla sipariş (mutfakta hazırlanan + teslim
+## bekleyen). Teslim alanında 6 yer var; seviye düşükken daha az sipariş açılır
+## ki oyuncu boğulmasın: sakin 2, Sv1–2 3, Sv3–4 4, Sv5–7 5, Sv8+ 6.
+static func max_orders(level: int) -> int:
+	if calm():
+		return 2
+	if level >= 8:
+		return 6
+	if level >= 5:
+		return 5
+	if level >= 3:
+		return 4
+	return 3
+
+
+## Siparişini paket alıp masaya oturmadan çıkan müşteri oranı. Masa sayısı
+## sınırlı olduğu için yoğunluk arttıkça paket servis artar: sakin dönemde 0,
+## Sv3 %15, Sv9 %40.
+static func takeaway_chance(level: int) -> float:
+	if calm() or level < 3:
+		return 0.0
+	return minf(0.15 + 0.042 * (level - 3), 0.4)
+
+
+## Sipariş verdikten sonra yemeğini bekleme sabrı (saniye): ürün başına süre
+## eklenir, seviyeyle biraz kısalır. Dolarsa para iade edilir, kötü yorum gelir.
+static func food_patience(level: int, item_count: int) -> float:
+	var base := maxf(50.0, 80.0 - 2.5 * (level - 1)) + 15.0 * item_count
+	if calm():
+		base *= CALM_PATIENCE_FACTOR
+	return base
 
 
 ## Yeni müşteri gelme aralığı (saniye). İyi puan müşteriyi sıklaştırır.
