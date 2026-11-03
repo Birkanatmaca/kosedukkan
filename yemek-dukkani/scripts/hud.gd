@@ -70,16 +70,21 @@ func _ready() -> void:
 	add_child(_portraits)
 	# Sonradan eklenenler dahil tüm butonlara basma animasyonu ve tık sesi.
 	get_tree().node_added.connect(_on_node_added)
-	_root = Control.new()
-	_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_root.theme = _make_theme()
-	add_child(_root)
-
+	# 3D'nin üstündeki göstergeler (pişme çubukları) ekranın tamamına göre konur;
+	# arayüzün geri kalanı telefonun güvenli alanının (çentik, ev çubuğu) içinde kalır.
 	_world_ui = Control.new()
 	_world_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_world_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_root.add_child(_world_ui)
+	_world_ui.theme = _make_theme()
+	add_child(_world_ui)
+
+	_root = Control.new()
+	_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.theme = _world_ui.theme
+	add_child(_root)
+	_apply_safe_area()
+	get_viewport().size_changed.connect(_apply_safe_area)
 
 	_bar_styles = [Util.style(Color("#e05555"), 6, 0), Util.style(Color("#f0a540"), 6, 0), Util.style(C_GREEN, 6, 0)]
 
@@ -140,6 +145,7 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	_avoid_keyboard()
 	var on_shop := main.screen == Main.SHOP and not main.transitioning and not main.register_focus
 	var on_kitchen := main.screen == Main.KITCHEN and not main.transitioning
 
@@ -770,16 +776,24 @@ func _build_kitchen_panel() -> Control:
 	box.add_theme_constant_override("separation", 10)
 	panel.add_child(box)
 	box.add_child(_heading("Pişir", "Kıvamı yeşildeyken ürüne dokun, sonra fişin tepsisine koy"))
+	# Ürün kartları ekrana sığar; ürün çoğalırsa yana kaydırılır.
+	var cards := ScrollContainer.new()
+	cards.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	cards.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	cards.custom_minimum_size = Vector2(0, 138)
+	box.add_child(cards)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
-	box.add_child(row)
+	row.add_theme_constant_override("separation", 10)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cards.add_child(row)
 	for id in Items.PRODUCTS:
 		if Items.PRODUCTS[id]["device"] == "":
 			continue
 		var btn := Button.new()
-		btn.custom_minimum_size = Vector2(0, 132)
+		btn.custom_minimum_size = Vector2(150, 132)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.add_theme_font_size_override("font_size", 23)
+		btn.add_theme_font_size_override("font_size", 16)
+		btn.clip_text = true
 		btn.icon = Icons.food(id)
 		btn.expand_icon = false
 		btn.add_theme_constant_override("icon_max_width", 64)
@@ -899,7 +913,54 @@ func _ready_bar() -> Control:
 	return row
 
 
+## Telefonun güvenli alanı (iPhone çentiği / Dynamic Island ve alttaki ev çubuğu):
+## arayüz bu alanın içine çekilir. Masaüstünde ekranın kullanılabilir alanı
+## pencereyle ilgisiz olduğundan sadece mobilde uygulanır.
+func _apply_safe_area() -> void:
+	if not OS.has_feature("mobile"):
+		return
+	var window := Vector2(DisplayServer.window_get_size())
+	if window.y <= 0.0:
+		return
+	var safe := Rect2(DisplayServer.get_display_safe_area())
+	var scale := get_viewport().get_visible_rect().size.y / window.y
+	_root.offset_top = safe.position.y * scale
+	_root.offset_bottom = -maxf(0.0, window.y - safe.end.y) * scale
+	_root.offset_left = safe.position.x * scale
+	_root.offset_right = -maxf(0.0, window.x - safe.end.x) * scale
+
+
+## Klavye açıkken yazılan kutu klavyenin altında kalmasın: tüm arayüz yukarı kayar.
+func _avoid_keyboard() -> void:
+	if not DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
+		return
+	var shift := 0.0
+	var focused := get_viewport().gui_get_focus_owner()
+	var keyboard := float(DisplayServer.virtual_keyboard_get_height()) if focused is LineEdit else 0.0
+	if keyboard > 0.0:
+		var window_h := float(DisplayServer.window_get_size().y)
+		var visible := get_viewport().get_visible_rect().size.y
+		var keyboard_top := visible - keyboard * visible / maxf(window_h, 1.0)
+		var bottom := (focused as Control).get_global_rect().end.y + 24.0
+		shift = maxf(0.0, bottom - keyboard_top)
+	offset.y = lerpf(offset.y, -shift, 0.35)
+
+
+## Klavye açıkken yazı kutusunun dışına dokununca klavye kapanır.
+func _input(event: InputEvent) -> void:
+	var touch := (event is InputEventScreenTouch or event is InputEventMouseButton) and event.is_pressed()
+	if not touch:
+		return
+	var focused := get_viewport().gui_get_focus_owner()
+	if focused is LineEdit and not (focused as Control).get_global_rect().has_point(event.position - offset):
+		focused.release_focus()
+
+
 func _on_node_added(node: Node) -> void:
+	# Kaydırılabilir alanlar telefonda parmakla (butonların üstünden de) kayar.
+	if node is ScrollContainer and not node.has_meta("touch_scroll"):
+		node.set_meta("touch_scroll", true)
+		node.add_child.call_deferred(TouchScroll.new())
 	if node is Button and not node.has_meta("press_fx"):
 		node.set_meta("press_fx", true)
 		var btn := node as Button
@@ -1320,7 +1381,7 @@ func _refresh_stock() -> void:
 	for id in _market_stock:
 		(_market_stock[id] as Label).text = "Stok: %d" % GameState.stock[id]
 	for id in _kitchen_buttons:
-		(_kitchen_buttons[id] as Button).text = "%s\nStok %d • Hazır %d" % [Items.display_name(id), GameState.stock[id], GameState.available(id)]
+		(_kitchen_buttons[id] as Button).text = "%s\n%d stok · %d hazır" % [Items.display_name(id), GameState.stock[id], GameState.available(id)]
 	for labels in _ready_labels:
 		for id in labels:
 			(labels[id] as Label).text = str(GameState.available(id))

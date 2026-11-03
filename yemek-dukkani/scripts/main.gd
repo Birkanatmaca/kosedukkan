@@ -42,6 +42,7 @@ func _ready() -> void:
 	shop.position.x = STATION_X[SHOP]
 	add_child(shop)
 	kitchen = Kitchen.new()
+	kitchen.shop = shop
 	kitchen.position.x = STATION_X[KITCHEN]
 	add_child(kitchen)
 
