@@ -94,6 +94,7 @@ func apply(data: Dictionary) -> void:
 
 ## Tüm ilerlemeyi siler ve oyunu baştan başlatır (hesap bağlantısı kalır).
 func reset_progress() -> void:
+	get_tree().paused = false
 	if FileAccess.file_exists(PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(PATH))
 	get_tree().reload_current_scene.call_deferred()

@@ -10,6 +10,10 @@ var _account_box: VBoxContainer
 var _sound_btn: Button
 var _reset_btn: Button
 var _reset_armed := false
+## Gizli sıfırlama: dükkan kartına art arda bu kadar dokununca buton çıkar.
+const RESET_TAPS := 5
+var _taps := 0
+var _last_tap := 0.0
 
 
 func _ready() -> void:
@@ -50,6 +54,8 @@ func _ready() -> void:
 	v.add_child(UiKit.label("OYUN", 20, UiKit.MUTED, 900))
 	var info := PanelContainer.new()
 	info.add_theme_stylebox_override("panel", UiKit.card_style())
+	info.mouse_filter = Control.MOUSE_FILTER_STOP
+	info.gui_input.connect(_on_info_input)
 	v.add_child(info)
 	var info_row := HBoxContainer.new()
 	info_row.add_theme_constant_override("separation", 12)
@@ -75,6 +81,7 @@ func _ready() -> void:
 	_reset_btn.add_theme_font_size_override("font_size", 24)
 	UiKit.set_icon(_reset_btn, "rotate-ccw", 30)
 	_reset_btn.pressed.connect(_on_reset)
+	_reset_btn.visible = false
 	v.add_child(_reset_btn)
 	_set_reset_armed(false)
 
@@ -159,6 +166,20 @@ func _refresh_sound() -> void:
 	_sound_btn.text = "Ses: Açık" if on else "Ses: Kapalı"
 	UiKit.set_icon(_sound_btn, "volume-2" if on else "volume-x", 30)
 	UiKit.candy(_sound_btn, UiKit.BLUE if on else UiKit.NEUTRAL, Color.WHITE if on else UiKit.TEXT)
+
+
+## Dükkan kartına hızlıca 5 kez dokununca gizli "İlerlemeyi Sıfırla" butonu belirir.
+func _on_info_input(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	_taps = _taps + 1 if now - _last_tap < 0.6 else 1
+	_last_tap = now
+	if _taps >= RESET_TAPS and not _reset_btn.visible:
+		_reset_btn.visible = true
+		_reset_btn.modulate.a = 0.0
+		_reset_btn.create_tween().tween_property(_reset_btn, "modulate:a", 1.0, 0.25)
+		Sfx.play("pop")
 
 
 ## Yanlışlıkla basılmasın: ilk basış onay ister, ikincisi sıfırlar.
