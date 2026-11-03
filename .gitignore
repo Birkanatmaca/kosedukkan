@@ -1,1 +1,3 @@
-tools/
+# Kökteki Godot programları (yemek-dukkani/tools/blender betikleri depoda kalır)
+/tools/
+__pycache__/
