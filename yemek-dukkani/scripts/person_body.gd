@@ -14,6 +14,10 @@ const MOUTH_Y := 1.42
 var legs: Array[Node3D] = []
 var arms: Array[Node3D] = []
 var mood := -1
+## Elde taşınan tepsinin gövdeye göre yeri
+var carry_offset := Vector3(0, 0.92, 0.42)
+## Başın üstündeki ruh hali ikonunun yüksekliği
+var head_top := 2.0
 
 var _brows: Array[MeshInstance3D] = []
 ## [sol, orta, sağ]

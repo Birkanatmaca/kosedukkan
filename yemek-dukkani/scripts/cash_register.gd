@@ -10,7 +10,6 @@ const MAX_JAR_COINS := 40
 
 var _drawer: Node3D
 var _display: Label3D
-var _pos_screen: MeshInstance3D
 var _pos_label: Label3D
 var _pos_led: MeshInstance3D
 var _jar_coins: Node3D
@@ -94,10 +93,11 @@ func _set_pos(text: String, color: Color) -> void:
 func _build_register() -> void:
 	var body := Color("#3a3f47")
 	var dark := Color("#262a30")
-	# Gövde ve çekmece yuvası
-	add_child(Util.box(Vector3(0.5, 0.13, 0.44), body, Vector3(0, 0.065, 0)))
+	# Gövde (Meshy modeli); çekmece kapalıyken modelin içinde saklı durur.
+	add_child(Util.model("equipment/kasa"))
 
 	_drawer = Node3D.new()
+	_drawer.scale = Vector3(0.9, 0.9, 0.9)
 	add_child(_drawer)
 	_drawer.add_child(Util.box(Vector3(0.46, 0.1, 0.4), dark, Vector3(0, 0.06, 0.02)))
 	_drawer.add_child(Util.box(Vector3(0.48, 0.1, 0.02), body, Vector3(0, 0.06, 0.225)))
@@ -112,21 +112,10 @@ func _build_register() -> void:
 		_drawer.add_child(Util.cylinder(0.035, 0.02, Color("#d9b648"), Vector3(cx, 0.11, 0.13)))
 		_drawer.add_child(Util.cylinder(0.03, 0.022, Color("#f6c945"), Vector3(cx, 0.115, 0.13)))
 
-	# Üst kısım: eğik tuş takımı
-	var keypad := Node3D.new()
-	keypad.position = Vector3(0, 0.17, 0.02)
-	keypad.rotation_degrees.x = 18
-	add_child(keypad)
-	keypad.add_child(Util.box(Vector3(0.46, 0.08, 0.34), body))
-	for row in 3:
-		for col in 5:
-			var key_color := Color("#e8553e") if col == 4 else Color("#d9dde0")
-			keypad.add_child(Util.box(Vector3(0.06, 0.02, 0.06), key_color, Vector3(-0.16 + col * 0.08, 0.05, -0.08 + row * 0.08)))
-
-	# Müşteriye ve kasiyere bakan dijital ekran
-	add_child(Util.box(Vector3(0.04, 0.16, 0.04), dark, Vector3(0, 0.3, -0.12)))
+	# Arkada direğe takılı dijital tutar ekranı
+	add_child(Util.box(Vector3(0.04, 0.5, 0.04), dark, Vector3(0, 0.25, -0.24)))
 	var screen := Node3D.new()
-	screen.position = Vector3(0, 0.4, -0.12)
+	screen.position = Vector3(0, 0.56, -0.24)
 	screen.rotation_degrees.x = -12
 	add_child(screen)
 	screen.add_child(Util.box(Vector3(0.36, 0.13, 0.04), dark))
@@ -142,23 +131,16 @@ func _build_pos() -> void:
 	pos.position = Vector3(-0.42, 0, 0.05)
 	pos.rotation_degrees.y = 15
 	add_child(pos)
-	pos.add_child(Util.box(Vector3(0.16, 0.06, 0.28), Color("#1d2025"), Vector3(0, 0.03, 0)))
-	var top := Node3D.new()
-	top.position = Vector3(0, 0.07, 0)
-	top.rotation_degrees.x = 20
-	pos.add_child(top)
-	top.add_child(Util.box(Vector3(0.15, 0.03, 0.26), Color("#2b2f36")))
-	_pos_screen = Util.box(Vector3(0.12, 0.005, 0.08), Color("#a8dcb8"), Vector3(0, 0.017, -0.07))
-	top.add_child(_pos_screen)
-	_pos_label = Util.label3d("", 48, Color("#1d4d2e"), Vector3(0, 0.022, -0.07))
-	_pos_label.pixel_size = 0.0012
-	_pos_label.rotation_degrees.x = -90
-	top.add_child(_pos_label)
-	for row in 3:
-		for col in 3:
-			top.add_child(Util.box(Vector3(0.03, 0.01, 0.025), Color("#5d6873"), Vector3(-0.035 + col * 0.035, 0.018, 0.02 + row * 0.035)))
-	_pos_led = Util.sphere(0.012, Color("#9aa4ae"), Vector3(0.05, 0.02, -0.12))
-	top.add_child(_pos_led)
+	pos.add_child(Util.model("equipment/pos", Vector3.ZERO, 0.0, 0.8))
+	# Ekranın üstünde durum yazısı ve ışığı
+	_pos_label = Util.label3d("", 48, Color("#7dffa8"), Vector3(0, 0.29, 0.02))
+	_pos_label.pixel_size = 0.0009
+	_pos_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_pos_label.outline_size = 10
+	_pos_label.outline_modulate = Color("#10161c")
+	pos.add_child(_pos_label)
+	_pos_led = Util.sphere(0.01, Color("#9aa4ae"), Vector3(0.045, 0.235, 0.03))
+	pos.add_child(_pos_led)
 
 
 func _build_jar() -> void:

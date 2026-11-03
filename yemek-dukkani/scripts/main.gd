@@ -26,7 +26,6 @@ var _views: Array[Transform3D] = []
 var _env: Environment
 var _sun: DirectionalLight3D
 ## Dükkan pencerelerinin ortak cam materyali (gece kararır)
-var _window_glass := Util.material(Color("#bfe3f2"))
 var _fade: ColorRect
 var _press_pos := Vector2.ZERO
 var _pressing := false
@@ -176,7 +175,7 @@ func _build_environment() -> void:
 
 
 ## Saate göre ışık: sabah sıcak, öğlen parlak, akşam turuncu, gece lacivert.
-## Pencere camları da gece kararır.
+## Pencereden görünen gökyüzü de buna uyar.
 func _update_daylight() -> void:
 	var t := inverse_lerp(GameState.OPEN_TIME, GameState.CLOSE_TIME, GameState.minutes)
 	var light := 0.12
@@ -188,4 +187,4 @@ func _update_daylight() -> void:
 	_sun.light_color = tint
 	_env.ambient_light_energy = 0.3 + 0.35 * light
 	_env.ambient_light_color = Color("#fff1e0").lerp(Color("#5a6aa8"), 1.0 - light)
-	_window_glass.albedo_color = Color("#bfe3f2").lerp(Color("#1c2340"), 1.0 - light)
+	shop.set_daylight(light, tint)

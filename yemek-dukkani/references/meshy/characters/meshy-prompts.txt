@@ -1,0 +1,18 @@
+Meshy AI — Köşe Dükkan karakterleri
+
+Ortak ayarlar
+- Auto-Rig için T-pose kullan.
+- Hedef: 5.000–8.000 üçgen, 1024 px texture, GLB.
+- İki karakterde de aynı stil cümlesini koru; mop ve kova gibi aksesuarları ayrı model üret.
+
+Temizlikçi — cleaner
+A cheerful female restaurant cleaner employee with a warm capable expression, dark hair tied in a neat bun, pale mint short-sleeve work shirt, forest-green apron with one large simple pocket and a small folded cream cleaning cloth tucked into it, light-blue cleaning gloves, dark teal work trousers, warm-cream slip-resistant shoes. Full body, front view, symmetrical T-pose with arms straight out horizontally, feet slightly apart, clear silhouette, friendly rounded chibi proportions with a slightly oversized head. Stylized cartoon mobile game asset, smooth simple shapes, soft rounded edges, warm vibrant colors, hand-painted texture look, clean and cute, single character, no base, no background, no handheld objects.
+
+Müşteri — customer
+A cheerful young adult male neighborhood-shop customer with short softly wavy dark hair and a friendly smile, terracotta-orange casual sweatshirt over a cream T-shirt, medium-blue jeans, cream-and-green sneakers. Full body, front view, symmetrical T-pose with arms straight out horizontally, feet slightly apart, clear silhouette, friendly rounded chibi proportions with a slightly oversized head. Stylized cartoon mobile game asset, smooth simple shapes, soft rounded edges, warm vibrant colors, hand-painted texture look, clean and cute, single character, no base, no background, no props.
+
+Kadın müşteri — female customer
+A cheerful young adult woman neighborhood-shop customer with shoulder-length softly wavy dark hair and a warm smile, mustard-yellow casual cardigan over a cream shirt, medium-blue jeans, cream sneakers with a small green accent. Full body, front view, symmetrical T-pose with arms straight out horizontally, feet slightly apart, clear silhouette, friendly rounded chibi proportions with a slightly oversized head. Stylized cartoon mobile game asset, smooth simple shapes, soft rounded edges, warm vibrant colors, hand-painted texture look, clean and cute, single character, no base, no background, no props.
+
+Erkek temizlikçi — male cleaner
+A friendly male restaurant cleaner employee with short neatly styled dark hair and a kind expression, pale mint short-sleeve work shirt, forest-green apron with one large simple pocket and a small folded cream cleaning cloth tucked into it, light-blue cleaning gloves, dark teal work trousers, warm-cream slip-resistant shoes. Full body, front view, symmetrical T-pose with arms straight out horizontally, feet slightly apart, clear silhouette, friendly rounded chibi proportions with a slightly oversized head. Stylized cartoon mobile game asset, smooth simple shapes, soft rounded edges, warm vibrant colors, hand-painted texture look, clean and cute, single character, no base, no background, no handheld objects.

@@ -18,6 +18,25 @@ signal order_delivered(customer: ShopCustomer, tip: int)
 
 const SPOTS := [Vector3(-1.5, 0, -0.4), Vector3(0, 0, -0.6), Vector3(1.5, 0, -0.4)]
 const DOOR := Vector3(0, 0, -9.9)
+## Müşteriler kaldırımda bu x'ten gelir / buraya kadar gidip kaybolur.
+const STREET_END_X := 11.0
+## Tabela: vitrinlerin üstünde ortalanır; ada göre 2.8–6.6 m genişler,
+## yazı en fazla SIGN_TEXT_MAX genişliğe sığdırılır (gerekirse küçülür, iki satıra iner).
+const SIGN_Y := 3.55
+const SIGN_FONT := 120
+const SIGN_MIN_FONT := 80
+const SIGN_TEXT_MAX := 5.6
+const DOOR_WIDTH := 1.5
+const DOOR_HEIGHT := 2.5
+## Pencereler: arka duvarda kapının iki yanında vitrin, yan duvarlarda bahçeye bakan.
+## Boyutlar: (genişlik, yükseklik). Arka vitrinler yola baksın diye alçaktan,
+## yan pencereler lambrinin üstünden başlar.
+const WINDOW_BOTTOM := 1.0
+const BACK_WINDOW_BOTTOM := 0.45
+const BACK_WINDOW_X := [-3.4, 3.4]
+const BACK_WINDOW_SIZE := Vector2(2.8, 2.45)
+const SIDE_WINDOW_Z := [-3.0, -6.4]
+const SIDE_WINDOW_SIZE := Vector2(2.4, 1.8)
 ## Koridorun tezgâha en yakın noktası; kasa dolunca sıra buradan geriye uzar.
 const AISLE_FRONT := Vector3(0, 0, -1.7)
 const QUEUE_SPACING := 0.75
@@ -37,7 +56,8 @@ const TABLES := [
 const SEAT_OFFSET := 0.85
 ## Masaya yaklaşırken kullanılan, masaların önündeki boş şerit.
 const LANE_OFFSET := 1.05
-const NAMES := ["Ayşe", "Mehmet", "Zeynep", "Can", "Elif", "Burak", "Selin", "Emre", "Deniz", "Ece", "Kerem", "Defne", "Mert", "Ada"]
+const MALE_NAMES := ["Mehmet", "Can", "Burak", "Emre", "Kerem", "Mert", "Efe", "Ahmet", "Yusuf", "Onur", "Barış", "Arda"]
+const FEMALE_NAMES := ["Ayşe", "Zeynep", "Elif", "Selin", "Ece", "Defne", "Ada", "Merve", "Esra", "Duru", "İrem", "Buse"]
 ## Masa bulamayan müşteri bu masanın ucunda (önünde, dış tarafta) ayakta bekler.
 const STAND_OFFSET := Vector3(0.5, 0, 0.78)
 ## Teslim alanı: sipariş verip numarasıyla bekleyenlerin durduğu yerler (kasanın iki yanı).
@@ -75,10 +95,18 @@ var _cracks: Node3D
 var _boards: Node3D
 var _sign: Node3D
 var _sign_label: Label3D
+var _sign_board: MeshInstance3D
+var _sign_trim: MeshInstance3D
+var _sign_lamps: Array[Node3D] = []
 var _ceiling: MeshInstance3D
 var _plants: Array[Node3D] = []
 var _lamps: Array[OmniLight3D] = []
 var _bulbs: Array[MeshInstance3D] = []
+var _sconces: Array[Node3D] = []
+var _chair_mat := StandardMaterial3D.new()
+var _glass_mat: StandardMaterial3D
+var _door: Node3D
+var _street := Street.new()
 
 
 func _ready() -> void:
@@ -94,6 +122,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_update_door(delta)
 	_spawn_timer -= delta
 	if _spawn_timer <= 0.0:
 		_spawn_timer = Progression.spawn_interval(GameState.level, GameState.rating()) * (1.0 - Decor.spawn_bonus(GameState.decor))
@@ -436,7 +465,8 @@ func _on_returned_tray(customer: ShopCustomer) -> void:
 ## Yeni müşteri kapıdan girer: kasada yer varsa oraya, yoksa sıranın sonuna.
 func _spawn() -> void:
 	var customer := ShopCustomer.new()
-	customer.customer_name = NAMES.pick_random()
+	customer.male = randf() < 0.5
+	customer.customer_name = (MALE_NAMES if customer.male else FEMALE_NAMES).pick_random()
 	customer.order = Progression.random_order(GameState.level)
 	customer.takeaway = randf() < Progression.takeaway_chance(GameState.level)
 	customer.max_patience = Progression.patience(GameState.level, customer.item_count(), GameState.upgrade_level("comfort"))
@@ -449,7 +479,10 @@ func _spawn() -> void:
 	customer.sat_down.connect(_on_sat_down)
 	customer.finished_eating.connect(_on_finished_eating)
 	add_child(customer)
-	customer.position = DOOR
+	# Kaldırımın bir ucundan yürüyüp kapıdan girer (pencereden gelişi görünür).
+	var from := [-1.0, 1.0].pick_random() as float
+	customer.position = Vector3(from * STREET_END_X, 0, Street.SIDEWALK_Z)
+	customer.entry = [Vector3(from * 1.0, 0, Street.SIDEWALK_Z), Vector3(0, 0, -10.8), DOOR]
 
 	var free := spots.find(null)
 	if free != -1 and queue.is_empty():
@@ -486,8 +519,9 @@ func _make_bag() -> Node3D:
 	var bag := Node3D.new()
 	bag.add_child(Util.box(Vector3(0.26, 0.3, 0.17), Color("#c8a06a"), Vector3(0, 0.15, 0)))
 	bag.add_child(Util.box(Vector3(0.27, 0.05, 0.18), Color("#a8814f"), Vector3(0, 0.3, 0)))
-	var tag := Util.label3d(GameState.shop_name.to_upper(), 30, Color("#e8553e"), Vector3(0, 0.17, 0.087))
+	var tag := Util.label3d(Util.upper_tr(GameState.shop_name), 30, Color("#e8553e"), Vector3(0, 0.17, 0.087))
 	tag.pixel_size = 0.0018
+	Util.fit_label(tag, 0.22, 16)
 	bag.add_child(tag)
 	bag.scale = Vector3.ONE * 0.01
 	bag.create_tween().tween_property(bag, "scale", Vector3.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
@@ -496,16 +530,12 @@ func _make_bag() -> Node3D:
 
 func _make_tray(served_items: Array[Array]) -> Node3D:
 	var tray := Node3D.new()
-	tray.add_child(Util.box(Vector3(0.54, 0.025, 0.36), Color("#b5452f"), Vector3(0, 0.0125, 0)))
-	for z in [-0.17, 0.17]:
-		tray.add_child(Util.box(Vector3(0.54, 0.035, 0.02), Color("#9a3a28"), Vector3(0, 0.03, z)))
-	for x in [-0.26, 0.26]:
-		tray.add_child(Util.box(Vector3(0.02, 0.035, 0.36), Color("#9a3a28"), Vector3(x, 0.03, 0)))
-	tray.add_child(Util.box(Vector3(0.46, 0.004, 0.28), Color("#f6ecd9"), Vector3(0, 0.027, 0)))
+	tray.add_child(Util.model("equipment/tepsi", Vector3.ZERO, 90.0, 1.28))
+	tray.add_child(Util.box(Vector3(0.46, 0.004, 0.28), Color("#f6ecd9"), Vector3(0, 0.03, 0)))
 
 	var items := Node3D.new()
 	items.name = "Items"
-	items.position.y = 0.03
+	items.position.y = 0.032
 	tray.add_child(items)
 	var count := served_items.size()
 	for i in count:
@@ -560,9 +590,14 @@ func _on_finished_eating(customer: ShopCustomer) -> void:
 
 
 ## Koridorun yan şeridinden kapıya giden yol (sıranın içinden geçmez).
+## Kapıdan çıkınca kaldırımda o tarafa doğru yürüyüp gözden kaybolur.
 func _exit_path(from: Vector3, side: float) -> Array:
 	var lane_x := side * SIDE_LANE_X
-	return [Vector3(lane_x, 0, minf(from.z, AISLE_FRONT.z)), Vector3(lane_x, 0, DOOR.z + 0.7), DOOR]
+	var away := side if side != 0.0 else 1.0
+	return [
+		Vector3(lane_x, 0, minf(from.z, AISLE_FRONT.z)), Vector3(lane_x, 0, DOOR.z + 0.7), DOOR,
+		Vector3(0, 0, -10.8), Vector3(away * 1.0, 0, Street.SIDEWALK_Z), Vector3(away * STREET_END_X, 0, Street.SIDEWALK_Z),
+	]
 
 
 func _post_review(customer: ShopCustomer) -> void:
@@ -723,33 +758,74 @@ func _build_room() -> void:
 	_panel_mat = StandardMaterial3D.new()
 	for mat in [_wall_mat, _side_mat, _panel_mat]:
 		mat.roughness = 0.8
+	# Plastik sandalye: hafif parlak
+	_chair_mat.roughness = 0.45
 	_floor_mat = Util.tile_material(Color.WHITE, Color.WHITE, 1.2)
 	add_child(Util.box(Vector3(12, 0.1, 12.2), _floor_mat, Vector3(0, -0.05, -3.9)))
 	# Tavan: kurulumda salona yukarıdan bakılsın diye gizlidir.
-	_ceiling = Util.box(Vector3(12, 0.1, 12.2), Color("#fbf3e6"), Vector3(0, 4.5, -3.9))
+	# Tavan ve duvarlar güneşe gölge düşürmez; yoksa salonun tamamı gölgede
+	# kalıp kararır. Müşteri ve mobilyaların zemine düşen gölgesi kalır.
+	_ceiling = Util.no_shadow(Util.box(Vector3(12, 0.1, 12.2), Color("#fbf3e6"), Vector3(0, 4.5, -3.9)))
 	add_child(_ceiling)
 
-	# Arka duvar: ortada kapı, iki yanda pencere, kapının üstünde tabela.
-	add_child(Util.box(Vector3(12, 4.5, 0.2), _wall_mat, Vector3(0, 2.25, -10.1)))
-	add_child(Util.box(Vector3(12, 1.0, 0.22), _panel_mat, Vector3(0, 0.5, -10.08)))
-	add_child(Util.box(Vector3(1.7, 2.6, 0.06), Color("#ffffff"), Vector3(0, 1.3, -9.99)))
-	add_child(Util.box(Vector3(1.5, 2.5, 0.07), Color("#7a4b32"), Vector3(0, 1.25, -9.97)))
-	add_child(Util.box(Vector3(1.1, 1.0, 0.08), Color("#bfe3f2"), Vector3(0, 1.75, -9.95)))
-	_sign = Node3D.new()
-	add_child(_sign)
-	_sign.add_child(Util.box(Vector3(3.6, 0.8, 0.1), Color("#e8553e"), Vector3(0, 3.3, -9.97)))
-	_sign_label = Util.label3d("", 130, Color.WHITE, Vector3(0, 3.3, -9.91))
-	_sign.add_child(_sign_label)
-	for x in [-3.6, 3.6]:
-		_window(Vector3(x, 2.0, -9.99), false)
+	# Pencere camı: şeffaf, hafif parlak; dışarısı (Street) görünür.
+	_glass_mat = StandardMaterial3D.new()
+	_glass_mat.albedo_color = Color(0.82, 0.92, 0.97, 0.16)
+	_glass_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_glass_mat.roughness = 0.04
+	_glass_mat.metallic_specular = 0.9
 
-	# Yan duvarlar, lambri ve pencereler
+	# Arka duvar: ortada camlı kapı, iki yanda büyük vitrin pencereleri.
+	var door_hole := [-DOOR_WIDTH / 2, DOOR_WIDTH / 2, 0.0, DOOR_HEIGHT]
+	var back_holes := [door_hole]
+	for x: float in BACK_WINDOW_X:
+		back_holes.append([x - BACK_WINDOW_SIZE.x / 2, x + BACK_WINDOW_SIZE.x / 2, BACK_WINDOW_BOTTOM, BACK_WINDOW_BOTTOM + BACK_WINDOW_SIZE.y])
+	_wall(true, -10.1, -6.0, 6.0, 4.5, 0.2, _wall_mat, back_holes)
+	_wall(true, -10.08, -6.0, 6.0, 1.0, 0.22, _panel_mat, back_holes)
+	for x: float in BACK_WINDOW_X:
+		_window(Vector3(x, BACK_WINDOW_BOTTOM, -10.1), BACK_WINDOW_SIZE, 0.0)
+	_build_door()
+	add_child(_street)
+	# Tabela: boyutu dükkanın adına göre _layout_sign'da ayarlanır.
+	_sign = Node3D.new()
+	_sign.position = Vector3(0, SIGN_Y, -9.97)
+	add_child(_sign)
+	_sign_trim = Util.box(Vector3(1, 1, 0.08), Color("#9c3524"))
+	_sign.add_child(_sign_trim)
+	_sign_board = Util.box(Vector3(1, 1, 0.1), Color("#e8553e"), Vector3(0, 0, 0.02))
+	_sign.add_child(_sign_board)
+	_sign_label = Util.label3d("", SIGN_FONT, Color.WHITE, Vector3(0, 0, 0.08))
+	_sign_label.outline_size = 14
+	_sign_label.outline_modulate = Color("#9c3524")
+	_sign_label.line_spacing = -18.0
+	_sign.add_child(_sign_label)
+	# Tabelayı aydınlatan iki küçük lamba
+	for i in 2:
+		var lamp := Node3D.new()
+		lamp.add_child(Util.cylinder(0.015, 0.3, Color("#2b2d33"), Vector3(0, 0.15, 0.12)))
+		var arm := Util.cylinder(0.015, 0.28, Color("#2b2d33"), Vector3(0, 0.3, 0.26))
+		arm.rotation_degrees.x = 90
+		lamp.add_child(arm)
+		lamp.add_child(Util.cylinder(0.07, 0.08, Color("#2b2d33"), Vector3(0, 0.27, 0.4)))
+		lamp.add_child(Util.sphere(0.04, Color("#fff1c4"), Vector3(0, 0.23, 0.4)))
+		_sign.add_child(lamp)
+		_sign_lamps.append(lamp)
+
+	# Yan duvarlar, lambri ve pencereler (dışarıda bahçe ve ağaçlar)
+	var side_holes := []
+	for z: float in SIDE_WINDOW_Z:
+		side_holes.append([z - SIDE_WINDOW_SIZE.x / 2, z + SIDE_WINDOW_SIZE.x / 2, WINDOW_BOTTOM, WINDOW_BOTTOM + SIDE_WINDOW_SIZE.y])
 	for side in [-1.0, 1.0]:
 		var x: float = side * 6.0
-		add_child(Util.box(Vector3(0.2, 4.5, 12.2), _side_mat, Vector3(x, 2.25, -3.9)))
-		add_child(Util.box(Vector3(0.22, 1.0, 12.2), _panel_mat, Vector3(x - side * 0.01, 0.5, -3.9)))
-		for z in [-3.0, -6.4]:
-			_window(Vector3(x - side * 0.11, 2.1, z), true)
+		_wall(false, x, -10.0, 2.2, 4.5, 0.2, _side_mat, side_holes)
+		add_child(Util.no_shadow(Util.box(Vector3(0.22, 1.0, 12.2), _panel_mat, Vector3(x - side * 0.01, 0.5, -3.9))))
+		for z: float in SIDE_WINDOW_Z:
+			_window(Vector3(x, WINDOW_BOTTOM, z), SIDE_WINDOW_SIZE, -side * 90.0)
+		# Pencerelerin arasında duvar aplikleri (lambalar alınınca takılır)
+		for z in [-1.4, -4.7, -8.1]:
+			var sconce := Util.model("lighting/duvar_lambasi", Vector3(x - side * 0.1, 2.3, z), -side * 90.0, 1.2)
+			add_child(sconce)
+			_sconces.append(sconce)
 
 	_build_ruin()
 
@@ -764,10 +840,10 @@ func _build_room() -> void:
 		_plants.append(plant)
 
 	# Koridor boyunca sarkan lambalar: kurulumda alınmadıysa kırık ve sönük.
-	for z in [-2.6, -5.6, -8.4]:
-		add_child(Util.cylinder(0.01, 0.8, Color("#333333"), Vector3(0, 4.1, z)))
-		add_child(Util.cylinder(0.22, 0.12, Color("#3a3f47"), Vector3(0, 3.66, z)))
-		var bulb := Util.sphere(0.12, Color("#ffd27a"), Vector3(0, 3.56, z))
+	# En arkadaki lamba tabelanın önüne düşmesin diye kapıdan biraz uzakta.
+	for z in [-2.2, -4.6, -7.0]:
+		add_child(Util.model("lighting/tavan_lambasi", Vector3(0, 3.62, z), 0.0, 1.2))
+		var bulb := Util.sphere(0.08, Color("#ffd27a"), Vector3(0, 3.66, z))
 		add_child(bulb)
 		_bulbs.append(bulb)
 		var lamp := OmniLight3D.new()
@@ -794,10 +870,11 @@ func _build_ruin() -> void:
 	_junk = Node3D.new()
 	add_child(_junk)
 	var stain := Color("#5d564c")
-	for pos in [Vector3(-3.0, 1.6, -9.99), Vector3(2.4, 2.8, -9.99), Vector3(4.8, 1.2, -9.99)]:
-		_junk.add_child(Util.box(Vector3(1.1, 0.8, 0.02), stain, pos))
+	# Lekeler pencere boşluklarına denk gelmeyen duvar parçalarında
+	for pos in [Vector3(-5.3, 3.5, -9.99), Vector3(1.4, 1.5, -9.99), Vector3(5.3, 3.6, -9.99)]:
+		_junk.add_child(Util.box(Vector3(1.0, 0.8, 0.02), stain, pos))
 	for side in [-1.0, 1.0]:
-		_junk.add_child(Util.box(Vector3(0.02, 0.9, 1.4), stain, Vector3(side * 5.89, 2.6, -4.6)))
+		_junk.add_child(Util.box(Vector3(0.02, 0.9, 1.4), stain, Vector3(side * 5.89, 2.6, -9.0)))
 	# Çöp yığınları, kırık kasalar, çöp poşetleri
 	for pos in [Vector3(-3.4, 0, -3.6), Vector3(3.0, 0, -5.8), Vector3(-1.8, 0, -7.4), Vector3(4.2, 0, -2.4), Vector3(-4.4, 0, -6.2)]:
 		_junk.add_child(Util.box(Vector3(0.6, 0.45, 0.5), Color("#6b5a45"), pos + Vector3(0, 0.22, 0)))
@@ -807,9 +884,10 @@ func _build_ruin() -> void:
 		_junk.add_child(Util.sphere(0.28, Color("#2a2a2e"), pos + Vector3(0.55, 0.22, -0.2)))
 		_junk.add_child(Util.sphere(0.2, Color("#33333a"), pos + Vector3(-0.45, 0.16, 0.25)))
 	# Devrilmiş eski sandalye
-	var chair := Util.box(Vector3(0.46, 0.06, 0.46), Color("#5b4636"), Vector3(1.9, 0.2, -4.0))
-	chair.rotation_degrees = Vector3(70, 30, 0)
+	var chair := Util.model("furniture/sandalye_eski", Vector3(1.9, 0.27, -4.0))
+	chair.rotation_degrees = Vector3(-90, 30, 0)
 	_junk.add_child(chair)
+	_junk.add_child(Util.model("furniture/sandalye_eski", Vector3(-2.6, 0, -8.6), 160.0))
 	# Köşelerde örümcek ağları
 	for pos in [Vector3(-5.85, 4.3, -9.95), Vector3(5.85, 4.3, -9.95), Vector3(-5.85, 4.3, 1.9), Vector3(5.85, 4.3, 1.9)]:
 		var web := Util.box(Vector3(0.9, 0.9, 0.01), Color(0.85, 0.85, 0.85), pos)
@@ -826,15 +904,16 @@ func _build_ruin() -> void:
 	_boards = Node3D.new()
 	add_child(_boards)
 	var plank := Color("#7a5a3a")
-	for x in [-3.6, 3.6]:
-		for y in [1.65, 2.35]:
-			var board := Util.box(Vector3(2.2, 0.22, 0.04), plank, Vector3(x, y, -9.95))
-			board.rotation_degrees.z = 8 if y > 2 else -6
+	# Harabe halinde pencereler tahtalarla çakılı (pencereler alınınca sökülür)
+	for x: float in BACK_WINDOW_X:
+		for y in [0.8, 1.35, 1.95, 2.5]:
+			var board := Util.box(Vector3(BACK_WINDOW_SIZE.x + 0.4, 0.24, 0.04), plank, Vector3(x, y, -9.94))
+			board.rotation_degrees.z = randf_range(-8, 8)
 			_boards.add_child(board)
 	for side in [-1.0, 1.0]:
-		for z in [-3.0, -6.4]:
-			for y in [1.75, 2.45]:
-				var board := Util.box(Vector3(0.04, 0.22, 2.2), plank, Vector3(side * 5.86, y, z))
+		for z: float in SIDE_WINDOW_Z:
+			for y in [1.4, 1.95, 2.5]:
+				var board := Util.box(Vector3(0.04, 0.24, SIDE_WINDOW_SIZE.x + 0.4), plank, Vector3(side * 5.86, y, z))
 				board.rotation_degrees.x = 7 if y > 2 else -5
 				_boards.add_child(board)
 
@@ -846,6 +925,11 @@ func _apply_decor() -> void:
 	_wall_mat.albedo_color = colors["wall"]
 	_side_mat.albedo_color = colors["side"]
 	_panel_mat.albedo_color = colors["panel"]
+	# Sandalyeler ve temizlikçilerin önlüğü/eldiveni duvar boyasının lambri rengine uyar.
+	_chair_mat.albedo_color = colors["panel"]
+	var uniform := uniform_colors()
+	for worker in _workers:
+		worker.set_uniform(uniform[0], uniform[1])
 	var floor_data: Dictionary = Decor.FLOORS[decor["floor"]]
 	_floor_mat.set_shader_parameter("color_a", floor_data["a"])
 	_floor_mat.set_shader_parameter("color_b", floor_data["b"])
@@ -857,34 +941,153 @@ func _apply_decor() -> void:
 		lamp.light_energy = 0.9 if decor["lamps"] else 0.12
 	for bulb in _bulbs:
 		bulb.material_override = Util.material(Color("#ffd27a") if decor["lamps"] else Color("#4a4a4a"))
+	for sconce in _sconces:
+		sconce.visible = decor["lamps"]
 	for i in _plants.size():
 		_plants[i].visible = i < decor["plants"]
 	_sign.visible = decor["sign"]
-	_sign_label.text = GameState.shop_name.to_upper()
+	_layout_sign(Util.upper_tr(GameState.shop_name))
 	register.visible = decor["register"]
 	_ceiling.visible = GameState.setup_done
 	_sync_tables()
 
 
-func _window(pos: Vector3, on_side_wall: bool) -> void:
-	var frame := Vector3(0.04, 1.5, 2.0) if on_side_wall else Vector3(2.0, 1.5, 0.04)
-	var glass := Vector3(0.05, 1.3, 1.8) if on_side_wall else Vector3(1.8, 1.3, 0.05)
-	var bar := Vector3(0.06, 1.3, 0.04) if on_side_wall else Vector3(0.04, 1.3, 0.06)
-	add_child(Util.box(frame, Color("#ffffff"), pos))
-	add_child(Util.box(glass, Color("#bfe3f2"), pos))
-	add_child(Util.box(bar, Color("#ffffff"), pos))
+## Boşluklu duvar: boşlukların etrafını kutularla doldurur.
+## along_x: duvar x ekseni boyunca uzanır (arka duvar), değilse z boyunca (yan duvar).
+## fixed: duvarın sabit ekseni (z ya da x), u0..u1 uzunluk, height yükseklik.
+## holes: [u0, u1, alt, üst] listesi.
+func _wall(along_x: bool, fixed: float, u0: float, u1: float, height: float, thickness: float, look, holes: Array) -> void:
+	var cuts := [u0, u1]
+	for hole in holes:
+		cuts.append_array([hole[0], hole[1]])
+	cuts.sort()
+	for i in cuts.size() - 1:
+		var a: float = cuts[i]
+		var b: float = cuts[i + 1]
+		if b - a < 0.001:
+			continue
+		var mid := (a + b) / 2.0
+		var spans := [[0.0, height]]
+		for hole in holes:
+			if hole[0] < mid and mid < hole[1]:
+				var rest := []
+				for span in spans:
+					if hole[2] > span[0]:
+						rest.append([span[0], minf(span[1], hole[2])])
+					if hole[3] < span[1]:
+						rest.append([maxf(span[0], hole[3]), span[1]])
+				spans = rest
+		for span in spans:
+			var h: float = span[1] - span[0]
+			if h < 0.001:
+				continue
+			var y: float = (span[0] + span[1]) / 2.0
+			var size := Vector3(b - a, h, thickness) if along_x else Vector3(thickness, h, b - a)
+			var pos := Vector3(mid, y, fixed) if along_x else Vector3(fixed, y, mid)
+			add_child(Util.no_shadow(Util.box(size, look, pos)))
+
+
+## Gerçekçi pencere: duvar kalınlığını saran beyaz pervaz, iç ve dış denizlik,
+## ortada kayıt ve üstte vasistas, şeffaf cam. pos: pencerenin alt ortası.
+## yaw: yerel +z salonun içine baksın diye dönüş (arka duvar 0, yan duvarlar ±90).
+func _window(pos: Vector3, size: Vector2, yaw: float) -> void:
+	var root := Node3D.new()
+	root.position = pos
+	root.rotation_degrees.y = yaw
+	add_child(root)
+	var white := Color("#f7f4ee")
+	var t := 0.08
+	var depth := 0.26
+	# Pervaz (boşluğun dört kenarı)
+	root.add_child(Util.box(Vector3(size.x + t * 2, t, depth), white, Vector3(0, size.y + t / 2, 0)))
+	root.add_child(Util.box(Vector3(size.x + t * 2, t, depth), white, Vector3(0, -t / 2, 0)))
+	for x in [-1.0, 1.0]:
+		root.add_child(Util.box(Vector3(t, size.y, depth), white, Vector3(x * (size.x + t) / 2, size.y / 2, 0)))
+	# İç denizlik (salona taşar) ve dış denizlik
+	root.add_child(Util.box(Vector3(size.x + 0.3, 0.05, 0.16), white, Vector3(0, -0.02, 0.17)))
+	root.add_child(Util.box(Vector3(size.x + 0.2, 0.05, 0.14), Color("#d9d4cb"), Vector3(0, -0.06, -0.17)))
+	# Kayıtlar: ortada dikey, üstte vasistas
+	var transom := size.y * 0.72
+	root.add_child(Util.box(Vector3(0.06, transom, 0.08), white, Vector3(0, transom / 2, 0)))
+	root.add_child(Util.box(Vector3(size.x, 0.06, 0.08), white, Vector3(0, transom, 0)))
+	# Cam
+	root.add_child(Util.no_shadow(Util.box(Vector3(size.x, size.y, 0.02), _glass_mat, Vector3(0, size.y / 2, 0))))
+
+
+## Camlı dükkan kapısı: sol kenarından menteşeli, müşteri yaklaşınca içeri açılır.
+func _build_door() -> void:
+	var wood := Color("#7a4b32")
+	var w := DOOR_WIDTH
+	var h := DOOR_HEIGHT
+	# Kasa
+	add_child(Util.box(Vector3(w + 0.16, 0.08, 0.26), Color("#f7f4ee"), Vector3(0, h + 0.04, -10.1)))
+	for x in [-1.0, 1.0]:
+		add_child(Util.box(Vector3(0.08, h, 0.26), Color("#f7f4ee"), Vector3(x * (w + 0.08) / 2, h / 2, -10.1)))
+	# Kanat: menteşe noktası etrafında döner
+	_door = Node3D.new()
+	_door.position = Vector3(-w / 2, 0, -10.1)
+	add_child(_door)
+	var leaf_w := w - 0.02
+	var cx := leaf_w / 2
+	for x in [0.05, leaf_w - 0.05]:
+		_door.add_child(Util.box(Vector3(0.1, h - 0.02, 0.06), wood, Vector3(x, h / 2, 0)))
+	for y in [0.12, h - 0.07, 1.0]:
+		_door.add_child(Util.box(Vector3(leaf_w, 0.12 if y != 1.0 else 0.06, 0.06), wood, Vector3(cx, y, 0)))
+	_door.add_child(Util.no_shadow(Util.box(Vector3(leaf_w - 0.2, h - 0.3, 0.02), _glass_mat, Vector3(cx, h / 2, 0))))
+	# Kulp ve "AÇIK" levhası
+	_door.add_child(Util.box(Vector3(0.04, 0.4, 0.04), Color("#c9a54a"), Vector3(leaf_w - 0.16, 1.05, 0.06)))
+	var tag := Util.label3d("AÇIK", 60, Color("#2f8f5b"), Vector3(cx, 1.6, 0.04))
+	tag.pixel_size = 0.004
+	_door.add_child(tag)
+
+
+## Kapıya yakın biri (müşteri, garson) varsa kapı açılır.
+func _update_door(delta: float) -> void:
+	var near := false
+	for child in get_children():
+		if (child is ShopCustomer or child is Worker) and Vector2(child.position.x, child.position.z).distance_to(Vector2(0, -10.1)) < 1.5:
+			near = true
+			break
+	_door.rotation_degrees.y = lerpf(_door.rotation_degrees.y, -85.0 if near else 0.0, 6.0 * delta)
+
+
+## Tabelayı ada göre boyutlar: yazı sığacak kadar geniş, uzun adda yazı
+## küçülür, en uzunlarda iki satıra iner ve tabela yükselir.
+func _layout_sign(text: String) -> void:
+	_sign_label.text = text
+	_sign_label.font_size = SIGN_FONT
+	var fit := Util.fit_label(_sign_label, SIGN_TEXT_MAX, SIGN_MIN_FONT)
+	var width := maxf(2.8, fit[0] + 0.9)
+	var height := 0.75 if fit[1] == 1 else 1.1
+	_sign_board.scale = Vector3(width, height, 1)
+	_sign_trim.scale = Vector3(width + 0.12, height + 0.12, 1)
+	# Alt kenar hep aynı yerde kalır (vitrinlerin üstü); iki satırlısı yukarı uzar.
+	_sign.position.y = SIGN_Y + (height - 0.75) / 2
+	for i in _sign_lamps.size():
+		_sign_lamps[i].position = Vector3((i * 2 - 1) * width * 0.3, height / 2, 0)
+
+
+## Temizlikçi kıyafeti: [önlük, eldiven] (dükkanın boyasına göre).
+func uniform_colors() -> Array[Color]:
+	return Decor.uniform_colors(GameState.decor)
+
+
+## Gün ışığını dışarıya (gökyüzü) da uygular.
+func set_daylight(light: float, tint: Color) -> void:
+	_street.set_daylight(light, tint)
 
 
 func _build_table(pos: Vector3) -> void:
 	var root := Node3D.new()
 	root.position = pos
 	add_child(root)
-	root.add_child(Util.cylinder(0.07, 0.78, Color("#5b4636"), Vector3(0, 0.39, 0)))
-	root.add_child(Util.cylinder(0.32, 0.04, Color("#5b4636"), Vector3(0, 0.02, 0)))
-	root.add_child(Util.cylinder(0.62, 0.06, Color("#8b5e3c"), Vector3(0, 0.78, 0)))
+	# Tepsi ve iki müşteri sığsın diye masa üstü genişletilir, boyu aynı kalır.
+	var top := Util.model("furniture/masa")
+	top.scale = Vector3(1.35, 1.0, 1.35)
+	root.add_child(top)
 	# Masanın üstünde küçük bir vazo
-	root.add_child(Util.cylinder(0.05, 0.14, Color("#e8553e"), Vector3(0, 0.88, -0.3)))
-	root.add_child(Util.sphere(0.06, Color("#ffd166"), Vector3(0, 0.98, -0.3)))
+	root.add_child(Util.cylinder(0.05, 0.14, Color("#e8553e"), Vector3(0, 0.85, -0.35)))
+	root.add_child(Util.sphere(0.06, Color("#ffd166"), Vector3(0, 0.95, -0.35)))
 
 	for side in [-1.0, 1.0]:
 		_build_chair(root, Vector3(side * SEAT_OFFSET, 0, 0), side)
@@ -908,11 +1111,10 @@ func _build_table(pos: Vector3) -> void:
 	root.create_tween().tween_property(root, "scale", Vector3.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
+## Sandalye modeli +Z'ye bakar; masaya dönsün diye çevrilir (sırtlık dışarıda).
+## Rengi ortak materyalden gelir (duvar boyasına göre _apply_decor değiştirir).
 func _build_chair(root: Node3D, pos: Vector3, side: float) -> void:
-	var wood := Color("#c0703f")
-	root.add_child(Util.box(Vector3(0.46, 0.06, 0.46), Color("#e8553e"), pos + Vector3(0, 0.45, 0)))
-	for lx in [-0.18, 0.18]:
-		for lz in [-0.18, 0.18]:
-			root.add_child(Util.box(Vector3(0.05, 0.43, 0.05), wood, pos + Vector3(lx, 0.215, lz)))
-	# Sırtlık masanın ters tarafında
-	root.add_child(Util.box(Vector3(0.06, 0.55, 0.46), wood, pos + Vector3(side * 0.21, 0.75, 0)))
+	var chair := Util.model("furniture/sandalye", pos, -side * 90.0)
+	for mesh: MeshInstance3D in Util.meshes(chair):
+		mesh.material_override = _chair_mat
+	root.add_child(chair)

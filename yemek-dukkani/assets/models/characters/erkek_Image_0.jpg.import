@@ -2,16 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://codaofriel4q0"
-path="res://.godot/imported/logo-option-1-chef-shopkeeper.png-3fb1a9610abe4ca6101a7688624799ce.ctex"
+uid="uid://cju3uaucog3il"
+path="res://.godot/imported/erkek_Image_0.jpg-60dfb6e70f5099e33eeb5966b6d90870.ctex"
 metadata={
 "vram_texture": false
+}
+generator_parameters={
+"md5": "a8d8f67791e0383d2455535e8faa7102"
 }
 
 [deps]
 
-source_file="res://assets/brand/logo-option-1-chef-shopkeeper.png"
-dest_files=["res://.godot/imported/logo-option-1-chef-shopkeeper.png-3fb1a9610abe4ca6101a7688624799ce.ctex"]
+source_file="res://assets/models/characters/erkek_Image_0.jpg"
+dest_files=["res://.godot/imported/erkek_Image_0.jpg-60dfb6e70f5099e33eeb5966b6d90870.ctex"]
 
 [params]
 
@@ -23,7 +26,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=false
+mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""

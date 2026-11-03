@@ -11,6 +11,7 @@ config_version=5
 [application]
 
 config/name="Köşe Dükkan"
+config/icon="res://assets/brand/logo-option-4-realistic-shop-city.png"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 

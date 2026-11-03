@@ -5,7 +5,13 @@ extends RefCounted
 ## hızlı ve çalışkan olanlar pahalıdır, tembel olanlar molaya çıkar.
 
 const MAX_STAFF := 2
-const NAMES := ["Ali", "Hande", "Murat", "Gizem", "Okan", "Seda", "Tolga", "Büşra", "Cem", "Nazlı", "Barış", "İpek"]
+## Cinsiyete göre isimler ve temizlikçi modelleri (ModelBody.CHARACTERS anahtarı).
+## Yeni bir temizlikçi modeli eklenince WORKER_MODELS'a bir satır yeter.
+const NAMES := {
+	"erkek": ["Ali", "Murat", "Okan", "Tolga", "Cem", "Barış", "Kaan", "Serkan", "Hakan", "Oğuz", "Volkan", "Sinan"],
+	"kadin": ["Hande", "Gizem", "Seda", "Büşra", "Nazlı", "İpek", "Derya", "Pınar", "Gamze", "Tuba", "Ceren", "Aslı"],
+}
+const WORKER_MODELS := { "erkek": "temizlikci_erkek", "kadin": "temizlikci_kadin" }
 
 ## move: yürüme hızı, clean: masa temizleme süresi (sn), pay: maaşa etkisi
 const SPEEDS := [
@@ -28,19 +34,22 @@ static func make_candidate() -> Dictionary:
 	var speed := randi_range(0, SPEEDS.size() - 1)
 	var work := randi_range(0, WORK.size() - 1)
 	var wage: int = BASE_WAGE + SPEEDS[speed]["pay"] + WORK[work]["pay"] + randi_range(-4, 6)
-	return { "name": NAMES.pick_random(), "speed": speed, "work": work, "wage": wage, "haggled": false }
+	var gender: String = WORKER_MODELS.keys().pick_random()
+	return {
+		"name": (NAMES[gender] as Array).pick_random(), "speed": speed, "work": work, "wage": wage, "haggled": false,
+		"model": WORKER_MODELS[gender], "gender": gender, "look": CharacterSkin.look_to_save(CharacterSkin.random_look()),
+	}
 
 
 ## Adaylar birbirinden ve mevcut çalışanlardan farklı isimlerde gelir.
 static func make_candidates(count := 3, taken: Array[Dictionary] = []) -> Array[Dictionary]:
-	var names := NAMES.duplicate()
-	for person in taken:
-		names.erase(person["name"])
-	names.shuffle()
+	var used := taken.map(func(p: Dictionary) -> String: return p["name"])
 	var list: Array[Dictionary] = []
 	for i in count:
 		var person := make_candidate()
-		person["name"] = names[i]
+		var names: Array = (NAMES[person["gender"]] as Array).filter(func(n: String) -> bool: return not used.has(n))
+		person["name"] = names.pick_random()
+		used.append(person["name"])
 		list.append(person)
 	return list
 

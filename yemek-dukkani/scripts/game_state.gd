@@ -199,9 +199,9 @@ var money := Decor.START_BUDGET:
 		money_changed.emit(money)
 
 ## Çiğ malzeme ve hazır içecek stoğu.
-var stock := { "tavuk": 3, "kofte": 3, "patates": 3, "kola": 5 }
+var stock := { "tavuk": 3, "tavuk_sis": 3, "kofte": 3, "patates": 3, "kola": 5 }
 ## Pişmiş, servise hazır ürünler: ürün -> kalite listesi (5 tam, 3 fazla, 2 az pişmiş).
-var prepared := { "tavuk": [], "kofte": [], "patates": [] }
+var prepared := { "tavuk": [], "tavuk_sis": [], "kofte": [], "patates": [] }
 var reviews: Array[Dictionary] = []
 var level := 1
 var xp := 0

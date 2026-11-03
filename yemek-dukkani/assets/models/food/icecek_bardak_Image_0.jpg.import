@@ -2,16 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c6wuaq3ehpant"
-path="res://.godot/imported/logo-option-3-shopkeeper.png-8c931af0040d603ddecdd35cf2748823.ctex"
+uid="uid://bydqjumjgw7nv"
+path="res://.godot/imported/icecek_bardak_Image_0.jpg-108974da71d2857622107ea048cecfa1.ctex"
 metadata={
 "vram_texture": false
+}
+generator_parameters={
+"md5": "ffe6e6ed6c5cf705a0fa4fa3b8c36c62"
 }
 
 [deps]
 
-source_file="res://assets/brand/logo-option-3-shopkeeper.png"
-dest_files=["res://.godot/imported/logo-option-3-shopkeeper.png-8c931af0040d603ddecdd35cf2748823.ctex"]
+source_file="res://assets/models/food/icecek_bardak_Image_0.jpg"
+dest_files=["res://.godot/imported/icecek_bardak_Image_0.jpg-108974da71d2857622107ea048cecfa1.ctex"]
 
 [params]
 
@@ -23,7 +26,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=false
+mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""

@@ -3,7 +3,7 @@ extends Node3D
 
 ## Market (toptancı) ekranı. 3D sahne sadece dekor; satın alma arayüzden yapılır.
 
-const SHELF_ITEMS := ["tavuk", "kofte", "patates", "kola"]
+const SHELF_ITEMS := ["tavuk", "tavuk_sis", "kofte", "patates", "kola"]
 
 
 func _ready() -> void:

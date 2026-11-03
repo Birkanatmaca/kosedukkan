@@ -30,6 +30,7 @@ void fragment() {
 
 static var _materials := {}
 static var _meshes := {}
+static var _scenes := {}
 static var _tile_shader: Shader
 
 
@@ -127,6 +128,35 @@ static func label3d(text: String, font_size: int, color: Color, pos := Vector3.Z
 	return label
 
 
+## Türkçe büyük harf: i → İ, ı → I (to_upper bunu bilmez).
+static func upper_tr(text: String) -> String:
+	return text.replace("i", "İ").replace("ı", "I").to_upper()
+
+
+## Label3D yazısının dünya birimindeki genişliği.
+static func label_width(label: Label3D) -> float:
+	return label.font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x * label.pixel_size
+
+
+## Yazıyı max_width'e sığdırır: önce yazı boyutunu min_size'a kadar küçültür,
+## yine sığmazsa iki satıra böler. Döner: [genişlik, satır sayısı].
+static func fit_label(label: Label3D, max_width: float, min_size: int) -> Array:
+	label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	var width := label_width(label)
+	if width > max_width:
+		label.font_size = maxi(min_size, int(label.font_size * max_width / width))
+		width = label_width(label)
+	if width <= max_width:
+		return [width, 1]
+	# Tek kelimeyi bölmek çirkin olur: alt sınırı aşıp tek satıra sığdır.
+	if not label.text.contains(" "):
+		label.font_size = int(label.font_size * max_width / width)
+		return [label_width(label), 1]
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.width = max_width / label.pixel_size
+	return [max_width, 2]
+
+
 ## Yukarı süzülüp kaybolan yazı (+₺14 gibi).
 static func float_text(parent: Node, global_pos: Vector3, text: String, color := Color.WHITE) -> void:
 	var label := Label3D.new()
@@ -159,6 +189,29 @@ static func style(color: Color, radius := 20, margin := 12, shadow := false) -> 
 		s.shadow_size = 10
 		s.shadow_offset = Vector2(0, 4)
 	return s
+
+
+## Meshy modelini (assets/models altındaki GLB) yerleştirir. Sahne bir kez yüklenir,
+## tüm kopyalar aynı mesh ve dokuyu paylaşır.
+static func model(path: String, pos := Vector3.ZERO, yaw := 0.0, scale := 1.0) -> Node3D:
+	if not _scenes.has(path):
+		_scenes[path] = load("res://assets/models/%s.glb" % path)
+	var inst: Node3D = (_scenes[path] as PackedScene).instantiate()
+	inst.position = pos
+	inst.rotation_degrees.y = yaw
+	inst.scale = Vector3.ONE * scale
+	return inst
+
+
+## Gölge düşürmesin (duvar, tavan gibi büyük yüzeyler için).
+static func no_shadow(inst: MeshInstance3D) -> MeshInstance3D:
+	inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return inst
+
+
+## Modelin tüm mesh'leri (renk ya da doku değiştirmek için).
+static func meshes(node: Node) -> Array[Node]:
+	return node.find_children("*", "MeshInstance3D", true, false)
 
 
 static func _instance(mesh: Mesh, look, pos: Vector3) -> MeshInstance3D:

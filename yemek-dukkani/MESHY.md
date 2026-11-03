@@ -38,7 +38,7 @@ Bunun için yiyecekleri **tam kıvamında, altın-kahverengi halleriyle** üret.
 | Dosya | Prompt |
 |---|---|
 | `models/food/tavuk.glb` | `a single grilled chicken drumstick, golden brown crispy skin, small white bone end` + stil |
-| `models/food/kofte.glb` | `three Turkish grilled meatballs (kofte) side by side, slightly flattened, brown grill marks` + stil |
+| `models/food/kofte.glb` | `five separate oblong Turkish grilled köfte meatballs, slightly flattened and plump, each with a few bold simple brown grill marks, arranged compactly in a shallow 3-over-2 group with small gaps, no plate, grill, tray, side dishes, or background` + stil |
 | `models/food/patates.glb` | `a small pile of loose golden french fries, thick cut` + stil |
 | `models/food/kola.glb` | `a red paper soda cup with white lid and a striped straw` + stil |
 

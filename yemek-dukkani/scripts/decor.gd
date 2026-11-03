@@ -46,6 +46,13 @@ static func default_state() -> Dictionary:
 	}
 
 
+## Temizlikçi kıyafeti: [önlük, eldiven]. Önlük duvar boyasının lambri renginde,
+## eldiven onun açığı (boya yoksa harabe duvarın rengi).
+static func uniform_colors(decor: Dictionary) -> Array[Color]:
+	var panel: Color = (WALL_COLORS[decor["paint_color"]] if decor["paint"] else RUIN_WALL)["panel"]
+	return [panel, panel.lightened(0.35)]
+
+
 ## Dekor müşterileri daha sabırlı yapar (en fazla %30).
 static func patience_bonus(decor: Dictionary) -> float:
 	var bonus := 0.0

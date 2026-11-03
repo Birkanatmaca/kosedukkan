@@ -14,9 +14,6 @@ signal returned_tray(customer: ShopCustomer)
 ## ORDERED: siparişini verip ödedi, numarasıyla teslim alanında yemeğini bekliyor.
 enum State { ARRIVING, WAITING, PAYING, TO_SEAT, EATING, LEAVING, QUEUED, WAIT_TABLE, RETURNING, ORDERED }
 
-const SHIRTS := [Color("#e05d5d"), Color("#4b8fe0"), Color("#5dbb63"), Color("#9b6ad6"), Color("#e0a33d"), Color("#3fb8b0")]
-const SKINS := [Color("#f5d2b8"), Color("#e8b48f"), Color("#c68863"), Color("#8d5a3c")]
-const HAIRS := [Color("#2b1d16"), Color("#5a3a22"), Color("#c99a4e"), Color("#1a1a1a"), Color("#8a4b2a")]
 ## Ruh hali rozetleri: [ikon, renk] (mutlu, normal, kızgın)
 const MOOD_BADGES := [["smile", UiKit.GREEN], ["meh", UiKit.YELLOW], ["angry", UiKit.RED]]
 const SPEED := 2.2
@@ -25,6 +22,9 @@ const EAT_TIME := 10.0
 const TABLE_WAIT_TIME := 25.0
 
 var customer_name := ""
+## Erkek ve kadın müşteriler kendi Meshy modelleriyle gelir; her biri farklı
+## ten, saç ve kıyafet rengiyle boyanır. İsim de cinsiyete göre seçilir (Shop).
+var male := false
 ## ürün -> adet
 var order := {}
 var state := State.ARRIVING
@@ -56,6 +56,10 @@ var carrying: Node3D
 ## Kızıp ayrılan müşteri hep kızgın görünür.
 var angry := false
 
+## Kaldırımdan kapıya kadar yürüyeceği noktalar. İçeri girene kadar her yeni
+## yolun önüne eklenir; sabrı da içeri girince azalmaya başlar.
+var entry: Array = []
+
 var _path: Array[Vector3] = []
 var _rest_angle := 0.0
 var _base_y := 0.0
@@ -67,11 +71,12 @@ var _icon: Sprite3D
 
 func _ready() -> void:
 	patience = max_patience
-	_body = PersonBody.new()
+	var model := ModelBody.new()
+	_body = model
 	add_child(_body)
-	_body.build(SHIRTS.pick_random(), SKINS.pick_random(), HAIRS.pick_random())
+	model.build_model("erkek" if male else "kadin", CharacterSkin.random_look())
 
-	_icon = Icons.sprite(null, 2.0)
+	_icon = Icons.sprite(null, _body.head_top)
 	add_child(_icon)
 
 	var collider := Util.collider_box(self, Vector3(0.7, 1.8, 0.6), Vector3(0, 0.9, 0))
@@ -101,6 +106,8 @@ func mood_icon() -> Texture2D:
 ## Verilen noktalardan sırayla geçer, sonunda rest_angle yönüne döner.
 func follow(path: Array, rest_angle: float) -> void:
 	_path.clear()
+	for p in entry:
+		_path.append(p)
 	for p in path:
 		_path.append(p)
 	_rest_angle = rest_angle
@@ -111,7 +118,7 @@ func take(package: Node3D) -> void:
 	carrying = package
 	package.reparent(_body)
 	package.rotation = Vector3.ZERO
-	package.create_tween().tween_property(package, "position", Vector3(0, 0.92, 0.42), 0.3).set_trans(Tween.TRANS_SINE)
+	package.create_tween().tween_property(package, "position", _body.carry_offset, 0.3).set_trans(Tween.TRANS_SINE)
 
 
 ## Taşıdığını bırakır ve döndürür (yeni yerine Shop koyar).
@@ -157,7 +164,8 @@ func _process(delta: float) -> void:
 
 	match state:
 		State.WAITING, State.QUEUED:
-			patience -= delta
+			if entry.is_empty():
+				patience -= delta
 		State.ORDERED:
 			food_patience -= delta
 		State.WAIT_TABLE:
@@ -185,7 +193,7 @@ func _update_mood() -> void:
 	_icon.visible = state != State.WAITING and state != State.PAYING and state != State.ORDERED
 	_icon.texture = mood_icon()
 	if _body.mood == PersonBody.Mood.ANGRY:
-		_icon.position.y = 2.0 + absf(sin(_t * 6.0)) * 0.08
+		_icon.position.y = _body.head_top + absf(sin(_t * 6.0)) * 0.08
 
 
 func _mood_for(ratio: float) -> int:
@@ -218,6 +226,8 @@ func _walk(delta: float) -> void:
 	if dist <= SPEED * delta:
 		position = Vector3(target.x, position.y, target.z)
 		_path.pop_front()
+		if not entry.is_empty():
+			entry.pop_front()
 		if _path.is_empty():
 			_arrive()
 		return

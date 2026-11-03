@@ -17,6 +17,7 @@ const NAV_HEIGHT := 92.0
 var main: Main
 
 var _root: Control
+var _portraits := PortraitStudio.new()
 var _world_ui: Control
 var _money: Label
 var _rating_btn: Button
@@ -65,6 +66,8 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Yiyecek ikonları 3D modellerden çekilir; paneller kurulmadan önce hazır olmalı.
 	add_child(FoodStudio.new())
+	# Personel kartlarındaki yüzler de 3D modelden çekilir.
+	add_child(_portraits)
 	# Sonradan eklenenler dahil tüm butonlara basma animasyonu ve tık sesi.
 	get_tree().node_added.connect(_on_node_added)
 	_root = Control.new()
@@ -387,6 +390,28 @@ func _refresh_staff() -> void:
 		_staff_list.add_child(_person_row("user-plus", person, "İstediği: ₺%d / gün" % person["wage"], buttons))
 
 
+## Kişinin yüz portresi, renkli yuvarlak köşeli bir çerçevede.
+func _portrait_frame(person: Dictionary, color: Color) -> Control:
+	var frame := PanelContainer.new()
+	var style := UiKit.card_style()
+	style.bg_color = color.lightened(0.55)
+	style.set_corner_radius_all(18)
+	style.border_color = color
+	style.set_border_width_all(3)
+	style.content_margin_left = 2
+	style.content_margin_right = 2
+	style.content_margin_top = 2
+	style.content_margin_bottom = 0
+	frame.add_theme_stylebox_override("panel", style)
+	var face := TextureRect.new()
+	face.texture = _portraits.portrait(person)
+	face.custom_minimum_size = Vector2(84, 84)
+	face.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	face.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	frame.add_child(face)
+	return frame
+
+
 func _person_row(icon: String, person: Dictionary, wage_text: String, buttons: Array[Button]) -> Control:
 	var row := PanelContainer.new()
 	row.add_theme_stylebox_override("panel", UiKit.card_style())
@@ -396,7 +421,7 @@ func _person_row(icon: String, person: Dictionary, wage_text: String, buttons: A
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 12)
 	v.add_child(h)
-	h.add_child(UiKit.badge_rect(icon, UiKit.BLUE if icon == "chef-hat" else UiKit.PURPLE, 60))
+	h.add_child(_portrait_frame(person, UiKit.BLUE if icon == "chef-hat" else UiKit.PURPLE))
 	var info := VBoxContainer.new()
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info.add_theme_constant_override("separation", 0)

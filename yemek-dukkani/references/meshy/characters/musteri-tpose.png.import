@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cb0v6h7p0ysuf"
-path="res://.godot/imported/logo-option-2-takeaway-chef.png-d952bf2baa03361084d5074f75423cc6.ctex"
+uid="uid://dtp73f15ewjy5"
+path="res://.godot/imported/musteri-tpose.png-9d1c1c057c21660c65d2643f136d54fb.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/brand/logo-option-2-takeaway-chef.png"
-dest_files=["res://.godot/imported/logo-option-2-takeaway-chef.png-d952bf2baa03361084d5074f75423cc6.ctex"]
+source_file="res://references/meshy/characters/musteri-tpose.png"
+dest_files=["res://.godot/imported/musteri-tpose.png-9d1c1c057c21660c65d2643f136d54fb.ctex"]
 
 [params]
 

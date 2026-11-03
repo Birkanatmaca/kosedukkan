@@ -108,7 +108,7 @@ static func max_queue(level: int) -> int:
 
 
 static func random_order(level: int) -> Dictionary:
-	var foods: Array = ["tavuk", "kofte", "patates"]
+	var foods: Array = ["tavuk", "tavuk_sis", "kofte", "patates"]
 	foods.shuffle()
 	var kinds := 1
 	if calm():
