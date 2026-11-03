@@ -87,8 +87,11 @@ func _process(delta: float) -> void:
 			_spawn_timer = 1.0
 			if GameState.tutorial_step <= 6 and _customer_count() == 0 and GameState.accepting_customers():
 				_spawn()
-		elif GameState.accepting_customers() and queue.size() < Progression.max_queue(GameState.level):
-			_spawn()
+		elif GameState.accepting_customers() and _customer_count() < Progression.max_customers():
+			# Kasada boş yer varsa doğrudan oraya, yoksa sıra sınırına kadar sıraya.
+			var counter_free := spots.has(null) and queue.is_empty()
+			if counter_free or queue.size() < Progression.max_queue(GameState.level):
+				_spawn()
 
 	_update_standing()
 	# Kapanış saati geldi ve içeride kimse kalmadıysa gün biter.

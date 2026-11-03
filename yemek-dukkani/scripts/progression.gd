@@ -33,26 +33,54 @@ static func xp_needed(level: int) -> int:
 	return 50 + 30 * (level - 1) + 8 * (level - 1) * (level - 1)
 
 
+## Sakin başlangıç: ilk garson işe alınana kadar müşteriler seyrek gelir,
+## sıra oluşmaz, içeride en fazla CALM_MAX_CUSTOMERS kişi olur, siparişler
+## tek ürünlüdür ve sabır daha uzundur. Oyuncu masaları kendisi temizlerken
+## yığılma olmasın diye; garson gelince normal tempo başlar.
+const CALM_SPAWN_FACTOR := 2.0
+const CALM_PATIENCE_FACTOR := 1.4
+const CALM_MAX_CUSTOMERS := 3
+
+
+static func calm() -> bool:
+	return GameState.staff.is_empty()
+
+
+## İçeride aynı anda bulunabilecek en fazla müşteri (sakin dönemde sınırlı).
+static func max_customers() -> int:
+	return CALM_MAX_CUSTOMERS if calm() else 999
+
+
 ## Yeni müşteri gelme aralığı (saniye). İyi puan müşteriyi sıklaştırır.
 static func spawn_interval(level: int, rating: float) -> float:
 	var base := maxf(3.5, 15.0 - 0.9 * (level - 1))
+	if calm():
+		base *= CALM_SPAWN_FACTOR
 	return base * lerpf(1.4, 0.8, clampf((rating - 1.0) / 4.0, 0.0, 1.0))
 
 
 static func patience(level: int, item_count: int, comfort_level: int) -> float:
 	var base := maxf(30.0, 60.0 - 3.0 * (level - 1)) + 10.0 * item_count
+	if calm():
+		base *= CALM_PATIENCE_FACTOR
 	return base * (1.0 + 0.12 * comfort_level)
 
 
-## Kasadaki 3 yerin arkasında bekleyebilecek en fazla kişi.
+## Kasadaki 3 yerin arkasında bekleyebilecek en fazla kişi (sakin dönemde sıra yok).
 static func max_queue(level: int) -> int:
-	return mini(2 + level / 2, 7)
+	return 0 if calm() else mini(2 + level / 2, 7)
 
 
 static func random_order(level: int) -> Dictionary:
 	var foods: Array = ["tavuk", "kofte", "patates"]
 	foods.shuffle()
 	var kinds := 1
+	if calm():
+		# Sakin dönemde tek ürün, bazen yanında kola.
+		var simple := { foods[0]: 1 }
+		if randf() < 0.3:
+			simple["kola"] = 1
+		return simple
 	if level >= 6:
 		kinds = randi_range(1, 3)
 	elif level >= 3:
