@@ -3,8 +3,16 @@ extends RefCounted
 
 ## Personel adayları ve özellikleri. Hız ve çalışkanlık maaşı belirler:
 ## hızlı ve çalışkan olanlar pahalıdır, tembel olanlar molaya çıkar.
+## İki görev var: garson (masaları temizler) ve kurye (paket siparişleri götürür).
 
-const MAX_STAFF := 2
+## Görevler: ad, en fazla kaç kişi, hangi seviyede açıldığı, taban maaş
+const ROLES := {
+	"garson": { "name": "Garson", "max": 2, "unlock": 1, "base": 35 },
+	"kurye": { "name": "Kurye", "max": 2, "unlock": 2, "base": 42 },
+}
+## Kurye bir seferde en fazla bu kadar paket taşır.
+const COURIER_CAPACITY := 4
+const COURIER_MODELS := { "erkek": "kurye" }
 ## Cinsiyete göre isimler ve temizlikçi modelleri (ModelBody.CHARACTERS anahtarı).
 ## Yeni bir temizlikçi modeli eklenince WORKER_MODELS'a bir satır yeter.
 const NAMES := {
@@ -25,28 +33,57 @@ const WORK := [
 	{ "name": "Normal", "rest": 0.15, "pay": 0, "haggle": 0.5 },
 	{ "name": "Çalışkan", "rest": 0.0, "pay": 12, "haggle": 0.35 },
 ]
-const BASE_WAGE := 35
 ## Pazarlıkta önerilen indirim
 const HAGGLE_RATIO := 0.8
 
 
-static func make_candidate() -> Dictionary:
+static func make_candidate(job := "garson") -> Dictionary:
 	var speed := randi_range(0, SPEEDS.size() - 1)
 	var work := randi_range(0, WORK.size() - 1)
-	var wage: int = BASE_WAGE + SPEEDS[speed]["pay"] + WORK[work]["pay"] + randi_range(-4, 6)
-	var gender: String = WORKER_MODELS.keys().pick_random()
+	var wage: int = ROLES[job]["base"] + SPEEDS[speed]["pay"] + WORK[work]["pay"] + randi_range(-4, 6)
+	var models: Dictionary = COURIER_MODELS if job == "kurye" else WORKER_MODELS
+	var gender: String = models.keys().pick_random()
 	return {
 		"name": (NAMES[gender] as Array).pick_random(), "speed": speed, "work": work, "wage": wage, "haggled": false,
-		"model": WORKER_MODELS[gender], "gender": gender, "look": CharacterSkin.look_to_save(CharacterSkin.random_look()),
+		"model": models[gender], "gender": gender, "look": CharacterSkin.look_to_save(CharacterSkin.random_look()),
+		"role": job,
 	}
 
 
-## Adaylar birbirinden ve mevcut çalışanlardan farklı isimlerde gelir.
-static func make_candidates(count := 3, taken: Array[Dictionary] = []) -> Array[Dictionary]:
+## Kişinin görevi (eski kayıtlarda görev yoksa garson).
+static func role(person: Dictionary) -> String:
+	return person.get("role", "garson")
+
+
+static func role_name(person: Dictionary) -> String:
+	return ROLES[role(person)]["name"]
+
+
+static func count(people: Array[Dictionary], job: String) -> int:
+	return people.filter(func(p: Dictionary) -> bool: return role(p) == job).size()
+
+
+## Kuryenin gidip dönme süresi (sn): paket başına uzar, hızlı kurye kısa sürer.
+static func trip_time(person: Dictionary, packages: int) -> float:
+	return (22.0 + 7.0 * packages) * 2.2 / move_speed(person)
+
+
+## Günün adayları: garsonlar, seviyesi gelince kuryeler de. İsimler birbirinden ve
+## mevcut çalışanlardan farklıdır.
+static func make_candidates(count := 3, taken: Array[Dictionary] = [], level := 1) -> Array[Dictionary]:
+	var jobs: Array[String] = []
+	for i in count:
+		jobs.append("garson")
+	if level >= int(ROLES["kurye"]["unlock"]):
+		jobs.append_array(["kurye", "kurye"])
+	return make_people(jobs, taken)
+
+
+static func make_people(jobs: Array[String], taken: Array[Dictionary]) -> Array[Dictionary]:
 	var used := taken.map(func(p: Dictionary) -> String: return p["name"])
 	var list: Array[Dictionary] = []
-	for i in count:
-		var person := make_candidate()
+	for job in jobs:
+		var person := make_candidate(job)
 		var names: Array = (NAMES[person["gender"]] as Array).filter(func(n: String) -> bool: return not used.has(n))
 		person["name"] = names.pick_random()
 		used.append(person["name"])

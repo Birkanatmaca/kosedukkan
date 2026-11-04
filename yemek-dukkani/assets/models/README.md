@@ -40,6 +40,8 @@ Toplam: 289 MB → 5 MB. Yeni gelen modeller aynı işlemden geçirilmeli.
 | `food/kofte.glb` | grilled_meatball_mode_1103123242 | Tek köfte, ızgara izi üstte (`flatflip`). Oyunda bir porsiyon = yan yana 3 köfte |
 | `food/patates.glb` | Hyper_realistic_pile_1103075950 | Patates kızartması yığını |
 | `food/icecek_bardak.glb` | A_hyper_realistic_4K_1103080140 | Pipetli bardak. Üstünde marka logoları var, yeniden dokulanmalı |
+| `food/lahmacun.glb` | lahmacun_3d_model_1104123703 | Lahmacun, 1,56M → 4000 üçgen, 512 px doku, 32 cm çap (`flat`) |
+| `food/pizza.glb` | Pizza_1104124703 | Pizza, 27k → 4000 üçgen, 512 px doku, 34 cm çap (`flat`) |
 | `equipment/tepsi.glb` | Red_Tray_1103080346 | Kırmızı servis tepsisi |
 | `equipment/kasa.glb` | Touchscreen_POS_Syste_1103081119 | Dokunmatik ekranlı yazar kasa + çekmece |
 | `equipment/pos.glb` | Pedestal_Mounted_POS_1103081124 | Ayaklı kart POS cihazı |
@@ -53,6 +55,7 @@ Toplam: 289 MB → 5 MB. Yeni gelen modeller aynı işlemden geçirilmeli.
 | `characters/kadin_maske.png` | `color_mask.py ... kadin` | Renk bölgeleri: R ten, G saç, B hırka, A pantolon |
 | `characters/temizlikci_erkek.glb` | Friendly_Garden_Helper_20261103 (mixamo) | Erkek temizlikçi. Yüz mimiği yok. Animasyonlar: Walking, `_01a1a125…` (yer süpürme), `_01a1a138…` (masa silme), `_01a1a13a…` (cam silme). Bekleme animasyonu yok (yürümenin ilk karesinde durur) |
 | `characters/temizlikci_kadin.glb` | Friendly_Cleaner_20261103 (mixamo) | Kadın temizlikçi. Animasyonlar ve aletler erkek temizlikçiyle aynı |
+| `characters/kurye.glb` | Delivery_Hero_20261104 (animated, mixamo) | Kurye. Yüz mimiği ve renk maskesi yok, kendi kıyafetiyle görünür. Animasyonlar: Walking, Running, Phone_Conversation (beklerken) |
 | `characters/temizlikci_erkek_maske.png`, `_maske_2.png` (kadın için de aynı adlarla) | `color_mask.py ... temizlikci` | 1. maske: ten, saç, gömlek, pantolon. 2. maske: R önlük, G eldiven (dükkan boyasına göre boyanır) |
 | `characters/erkek_maske.png` | `tools/blender/color_mask.py` ile üretildi | Renk bölgeleri: R ten, G saç, B ceket, A pantolon. `CharacterSkin` her müşteriyi bu maskeyle farklı boyar |
 

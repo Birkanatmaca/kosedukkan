@@ -171,6 +171,8 @@ func _spawn_car(start_x := INF) -> void:
 	car.set_meta("wheels", wheels)
 	add_child(car)
 	_cars.append(car)
+	if start_x == INF and randf() < 0.35:
+		Sfx.play("car_pass", 0.15, Main.SHOP)
 
 
 func _flat(inst: MeshInstance3D) -> MeshInstance3D:

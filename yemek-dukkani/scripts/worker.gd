@@ -188,6 +188,7 @@ func _arrive() -> void:
 			_timer = _clean_total
 			_show_tool(_cloth)
 			_set_icon("spray-can", UiKit.BLUE)
+			Sfx.play("spray", 0.1, Main.SHOP)
 		State.TO_SWEEP:
 			state = State.SWEEPING
 			_timer = randf_range(4.0, 6.0)

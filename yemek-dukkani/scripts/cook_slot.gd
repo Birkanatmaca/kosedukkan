@@ -13,6 +13,8 @@ var cook_time := 1.0
 ## Pişme süresi çarpanı (hız geliştirmesiyle küçülür).
 var speed := 1.0
 
+## Tarihi geçmiş malzemeyle mi pişiyor
+var spoiled := false
 var _mat := StandardMaterial3D.new()
 var _model: Node3D
 var _smoke: CPUParticles3D
@@ -33,10 +35,13 @@ func doneness() -> float:
 	return 0.0 if is_empty() else elapsed / cook_time
 
 
-func start(id: String) -> void:
+## is_spoiled: tarihi geçmiş malzeme (yeşilimsi pişer, müşteriyi hasta eder)
+func start(id: String, is_spoiled := false) -> void:
 	product = id
+	spoiled = is_spoiled
 	elapsed = 0.0
 	cook_time = float(Items.PRODUCTS[id]["cook_time"]) * speed
+	Sfx.play("sizzle_start" if device == "izgara" else "fryer_drop", 0.1)
 	_model = Items.model(id, _mat)
 	add_child(_model)
 	_model.scale = Vector3.ONE * 0.01
@@ -45,11 +50,18 @@ func start(id: String) -> void:
 	_update_look()
 
 
+## Fırında ürün kürek yerine varana kadar görünmez.
+func hide_item(hidden: bool) -> void:
+	if _model:
+		_model.visible = not hidden
+
+
 func clear() -> void:
 	if _model:
 		_model.queue_free()
 		_model = null
 	product = ""
+	spoiled = false
 	elapsed = 0.0
 	_smoke.emitting = false
 
@@ -64,6 +76,8 @@ func _process(delta: float) -> void:
 func _update_look() -> void:
 	var d := doneness()
 	_mat.albedo_color = Items.cook_color(product, d)
+	if spoiled:
+		_mat.albedo_color = _mat.albedo_color.lerp(Items.SPOILED_TINT, 0.5)
 	_model.position.y = absf(sin(elapsed * 25.0)) * 0.006
 	_smoke.emitting = d > 0.15
 	_smoke.color = Color(1, 1, 1, 0.45) if d < Items.PERFECT_LIMIT else Color(0.2, 0.2, 0.2, 0.85)

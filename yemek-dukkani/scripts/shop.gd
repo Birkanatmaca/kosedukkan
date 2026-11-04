@@ -14,7 +14,22 @@ signal payment_requested(customer: ShopCustomer, amount: int)
 signal sale_completed(customer: ShopCustomer, amount: int, tip: int)
 signal order_placed(order: Dictionary)
 signal orders_changed
+## Kasadaki müşterinin siparişi girilecek (Hud kasa ekranını açar).
+signal order_requested(customer: ShopCustomer)
 signal order_delivered(customer: ShopCustomer, tip: int)
+## Paket servis telefonu: çalmaya başladı, açıldı ya da kapandı (Hud çağrı kartını gösterir).
+signal call_changed
+## Bir kuryenin durumu değişti (yola çıktı, döndü, paket aldı).
+signal couriers_changed
+## Kurye paketleri teslim etti: toplam ücret ve bahşiş.
+signal deliveries_completed(courier: Courier, amount: int, tip: int)
+
+## Paket siparişlerin adresleri (rastgele seçilir)
+const STREETS := ["Çiçek Sk.", "Lale Sk.", "Gül Sk.", "Papatya Cd.", "Çınar Sk.", "Menekşe Sk.", "Okul Cd.", "Pazar Sk.", "Bahçe Sk.", "Kavak Cd.", "Fırın Sk.", "Yalı Cd."]
+## Telefon bu kadar saniye çalar, açılmazsa sipariş kaçar.
+const RING_TIME := 14.0
+## Açılan çağrıda karar süresi (saniye)
+const DECIDE_TIME := 15.0
 
 ## Kasanın önündeki tek sipariş yeri (yazar kasanın tam karşısı)
 const SPOTS := [Vector3(0.6, 0, 0.2)]
@@ -65,10 +80,14 @@ const FEMALE_NAMES := ["Ayşe", "Zeynep", "Elif", "Selin", "Ece", "Defne", "Ada"
 const STAND_OFFSET := Vector3(0.5, 0, 0.78)
 ## Teslim alanı: sipariş veren sola kayar, kasanın solundaki boşlukta numarasıyla
 ## bekler (önce tezgâha yakın sıra dolar).
+## Tezgâhın önü (kasanın solu) paket teslim noktasıdır; orada kurye bekler
+## (Courier.SPOTS), müşteriler onun arkasındaki sıralarda.
 const PICKUP_WAIT := [
-	Vector3(-0.8, 0, 0.25), Vector3(-1.6, 0, 0.25), Vector3(-2.4, 0, 0.25),
-	Vector3(-1.2, 0, -0.5), Vector3(-2.0, 0, -0.5), Vector3(-2.8, 0, -0.5),
+	Vector3(-0.4, 0, -0.5), Vector3(-1.15, 0, -0.5), Vector3(-1.9, 0, -0.5),
+	Vector3(-2.65, 0, -0.5), Vector3(-1.4, 0, -1.2), Vector3(-2.2, 0, -1.2),
 ]
+## Paket teslim noktası: tezgâhta "PAKET TESLİM" tabelası, önünde kuryeler bekler.
+const PACKAGE_SIGN := Vector3(-1.1, 0.98, 1.0)
 
 ## Kasanın önündeki yer (SPOTS ile aynı sırada; boşsa null)
 var spots: Array = [null]
@@ -89,6 +108,10 @@ var register: CashRegister
 var _spawn_timer := 2.0
 var _next_number := 1
 var _workers: Array[Worker] = []
+var couriers: Array[Courier] = []
+## Gelen paket çağrısı: { name, address, km, items, price, time, open }; çağrı yoksa boş.
+var call := {}
+var _call_timer := 12.0
 # Dekor parçaları (kurulumda değişir)
 var _wall_mat: StandardMaterial3D
 var _side_mat: StandardMaterial3D
@@ -110,6 +133,7 @@ var _sconces: Array[Node3D] = []
 var _chair_mat := StandardMaterial3D.new()
 var _glass_mat: StandardMaterial3D
 var _door: Node3D
+var _door_open := false
 var _street := Street.new()
 
 
@@ -127,6 +151,8 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_update_door(delta)
+	# Salon kalabalıklaştıkça uğultu artar.
+	Sfx.set_loop_level("crowd", 0.0 if not GameState.setup_done else clampf(_customer_count() / 8.0, 0.2, 1.0))
 	_spawn_timer -= delta
 	if _spawn_timer <= 0.0:
 		_spawn_timer = Progression.spawn_interval(GameState.level, GameState.rating()) * (1.0 - Decor.spawn_bonus(GameState.decor))
@@ -142,8 +168,10 @@ func _process(delta: float) -> void:
 				_spawn()
 
 	_update_standing()
-	# Kapanış saati geldi ve içeride kimse kalmadıysa gün biter.
-	if GameState.is_open and GameState.minutes >= GameState.CLOSE_TIME and _customer_count() == 0:
+	_update_calls(delta)
+	_update_deliveries(delta)
+	# Kapanış saati geldi, içeride kimse ve yolda paket kalmadıysa gün biter.
+	if GameState.is_open and GameState.minutes >= GameState.CLOSE_TIME and _customer_count() == 0 and deliveries_done():
 		GameState.end_day()
 
 	# Kasada yer boşaldıysa sıradaki öne geçer.
@@ -163,6 +191,8 @@ func _process(delta: float) -> void:
 		if customer.patience <= 0.0:
 			_leave_angry(customer)
 	for order in orders.duplicate():
+		if order.get("delivery", false):
+			continue
 		var customer: ShopCustomer = order["customer"]
 		if customer.state == ShopCustomer.State.ORDERED and customer.food_patience <= 0.0:
 			_order_timeout(order)
@@ -189,7 +219,7 @@ func open_order_count() -> int:
 ## Müşteriye dokununca: kasadaysa siparişini al, teslim bekliyorsa ve hazırsa teslim et.
 func _on_customer_tapped(customer: ShopCustomer) -> void:
 	if customer.state == ShopCustomer.State.WAITING:
-		take_order(customer)
+		request_order(customer)
 	elif customer.state == ShopCustomer.State.ORDERED:
 		var order := order_of(customer)
 		if not order.is_empty():
@@ -203,8 +233,14 @@ func order_of(customer: ShopCustomer) -> Dictionary:
 	return {}
 
 
-## Kasada siparişi alır ve ödemeyi başlatır. Ürünlerin hazır olması gerekmez.
-func take_order(customer: ShopCustomer) -> bool:
+## Kasa ekranını açtırır: önce sipariş alınabilir mi bakılır (ödeme sürüyor mu,
+## teslim alanında yer var mı).
+func request_order(customer: ShopCustomer) -> void:
+	if can_take_order(customer):
+		order_requested.emit(customer)
+
+
+func can_take_order(customer: ShopCustomer) -> bool:
 	if customer.state != ShopCustomer.State.WAITING:
 		return false
 	if paying:
@@ -214,9 +250,17 @@ func take_order(customer: ShopCustomer) -> bool:
 		GameState.show_toast("Teslim alanı dolu! Önce hazır siparişleri teslim et")
 		Sfx.play("error")
 		return false
+	return true
+
+
+## Kasa ekranında doğru girilen siparişin ödemesini başlatır. Ürünlerin hazır
+## olması gerekmez.
+func take_order(customer: ShopCustomer) -> bool:
+	if not can_take_order(customer):
+		return false
 	var price := 0
 	for id in customer.order:
-		price += int(Items.PRODUCTS[id]["price"]) * int(customer.order[id])
+		price += Items.price(id) * int(customer.order[id])
 	customer.sale_price = price
 	customer.counter_wait_ratio = customer.patience / customer.max_patience
 	customer.state = ShopCustomer.State.PAYING
@@ -234,6 +278,8 @@ func complete_payment(customer: ShopCustomer, loss: int) -> void:
 		GameState.show_toast("₺%d fazla paraüstü verdin!" % loss)
 	sale_completed.emit(customer, customer.sale_price, 0)
 	GameState.record_sale(customer.sale_price, 0)
+	# Kasa "çın" dedikten sonra yazıcı siparişin fişini basar.
+	get_tree().create_timer(0.35).timeout.connect(Sfx.play.bind("receipt"))
 
 	var order := { "number": _next_number, "customer": customer, "items": customer.order.duplicate(), "filled": {}, "ready": false }
 	_next_number += 1
@@ -272,7 +318,10 @@ func fill_order(order: Dictionary) -> void:
 	order["ready"] = complete
 	if complete:
 		Sfx.play("approve")
-		GameState.show_toast("#%d hazır! Dükkanda teslim et" % order["number"])
+		if order.get("delivery", false):
+			GameState.show_toast("#%d paket hazır! Dükkanda kuryeye ver" % order["number"])
+		else:
+			GameState.show_toast("#%d hazır! Dükkanda teslim et" % order["number"])
 	elif placed > 0:
 		Sfx.play("pop")
 	else:
@@ -283,7 +332,12 @@ func fill_order(order: Dictionary) -> void:
 
 ## Hazır siparişi müşteriye teslim eder: tepsi kasanın yanına konur, müşteri alıp masasına gider.
 func deliver(order: Dictionary) -> void:
+	if order.get("delivery", false):
+		give_to_courier(order)
+		return
 	var customer: ShopCustomer = order["customer"]
+	if order["ready"] and customer.state == ShopCustomer.State.ORDERED:
+		Sfx.play("clink", 0.05)
 	if not order["ready"]:
 		GameState.show_toast("#%d henüz hazır değil" % order["number"])
 		Sfx.play("error")
@@ -293,12 +347,17 @@ func deliver(order: Dictionary) -> void:
 
 	var served: Array[Array] = []
 	var quality_sum := 0
+	var spoiled := false
+	var base_price := 0
 	var under: Array[String] = []
 	var over: Array[String] = []
 	for id in order["filled"]:
 		for quality in order["filled"][id]:
 			served.append([id, quality])
 			quality_sum += quality
+			base_price += int(Items.PRODUCTS[id]["price"])
+			if quality == 1:
+				spoiled = true
 			if quality == 2 and not under.has(Items.display_name(id)):
 				under.append(Items.display_name(id))
 			elif quality == 3 and not over.has(Items.display_name(id)):
@@ -308,7 +367,19 @@ func deliver(order: Dictionary) -> void:
 	var stars := roundi(float(quality_sum) / served.size())
 	if wait_ratio < 0.25:
 		stars -= 1
+	# Fiyat: müşterinin razı olduğundan pahalıysa puan düşer, ucuzsa memnun kalır.
+	var price_ratio := float(customer.sale_price) / maxf(base_price, 1.0) / Progression.price_tolerance()
+	if price_ratio > 1.7:
+		stars -= 2
+	elif price_ratio > 1.3:
+		stars -= 1
+	elif price_ratio < 0.8:
+		stars += 1
 	stars = clampi(stars, 1, 5)
+	# Tarihi geçmiş malzemeyle yapılmış yemek: yer, 1 yıldız verir, kızıp gider.
+	if spoiled:
+		stars = 1
+		customer.set_meta("spoiled", true)
 	var tip := roundi(customer.sale_price * 0.2) if stars == 5 else 0
 	customer.sale_tip = tip
 	if tip > 0:
@@ -316,7 +387,14 @@ func deliver(order: Dictionary) -> void:
 		GameState.record_tip(tip)
 	GameState.add_xp(Progression.sale_xp(served.size(), stars))
 	customer.served_items = served
-	customer.pending_review = [stars, _review_text(stars, wait_ratio, under, over)]
+	var review := _review_text(stars, wait_ratio, under, over)
+	if spoiled:
+		review = ["Yemek bozuktu, midem bulandı! Bir daha asla gelmem.", "Malzemenin tarihi geçmiş, tadından belli. Rezalet!"].pick_random()
+	elif price_ratio > 1.3:
+		review += " Ama fiyatlar çok tuzlu."
+	elif price_ratio < 0.8:
+		review += " Bu fiyata harika!"
+	customer.pending_review = [stars, review]
 
 	orders.erase(order)
 	pickup_wait[pickup_wait.find(customer)] = null
@@ -541,17 +619,25 @@ func _make_tray(served_items: Array[Array]) -> Node3D:
 	items.name = "Items"
 	items.position.y = 0.032
 	tray.add_child(items)
-	var count := served_items.size()
+	# Yemekler önde tabaklarda, içecekler arkada (tabaksız, yemeği örtmesin).
+	var foods: Array[Array] = served_items.filter(func(e: Array) -> bool: return Items.PRODUCTS[e[0]]["device"] != "")
+	var drinks: Array[Array] = served_items.filter(func(e: Array) -> bool: return Items.PRODUCTS[e[0]]["device"] == "")
+	var ordered: Array[Array] = foods + drinks
+	var count := ordered.size()
 	for i in count:
-		var id: String = served_items[i][0]
+		var id: String = ordered[i][0]
+		var drink: bool = i >= foods.size()
 		var slot := Node3D.new()
-		slot.position = Vector3((i - (count - 1) * 0.5) * 0.15, 0, 0)
-		if id != "kola":
+		if drink:
+			var k := i - foods.size()
+			slot.position = Vector3(0.17 - k * 0.11, 0, -0.08)
+		else:
+			slot.position = Vector3((i - (foods.size() - 1) * 0.5) * 0.15, 0, 0.04 if not drinks.is_empty() else 0.0)
 			slot.add_child(Util.cylinder(0.07, 0.012, Color("#ffffff"), Vector3(0, 0.006, 0)))
-		var item := Items.model(id, Util.material(Items.quality_color(id, served_items[i][1])))
-		item.position.y = 0.012
+		var item := Items.model(id, Util.material(Items.quality_color(id, ordered[i][1])))
+		item.position.y = 0.0 if drink else 0.012
 		item.rotation_degrees.y = 90.0
-		item.scale = Vector3.ONE * 0.6
+		item.scale = Vector3.ONE * (0.75 if drink else 0.6)
 		slot.add_child(item)
 		items.add_child(slot)
 		slot.scale = Vector3.ONE * 0.01
@@ -578,6 +664,8 @@ func _on_sat_down(customer: ShopCustomer) -> void:
 
 ## Yemek bitince tepsi ve kırıntılar masada kalır; masa kirlenir.
 func _on_finished_eating(customer: ShopCustomer) -> void:
+	if customer.has_meta("spoiled"):
+		customer.angry = true
 	var seat := customer.seat
 	var table: Dictionary = seat["table"]
 	table["customer"] = null
@@ -595,6 +683,10 @@ func _on_finished_eating(customer: ShopCustomer) -> void:
 
 ## Koridorun yan şeridinden kapıya giden yol (sıranın içinden geçmez).
 ## Kapıdan çıkınca kaldırımda o tarafa doğru yürüyüp gözden kaybolur.
+func exit_path(from: Vector3, side: float) -> Array:
+	return _exit_path(from, side)
+
+
 func _exit_path(from: Vector3, side: float) -> Array:
 	var lane_x := side * SIDE_LANE_X
 	var away := side if side != 0.0 else 1.0
@@ -709,7 +801,7 @@ func _clean_table(table: Dictionary) -> void:
 	(table["mark"] as Node3D).visible = false
 	(table["progress"] as Label3D).visible = false
 	Util.float_text(self, (table["pos"] as Vector3) + Vector3(0, 1.2, 0), "Temiz!", UiKit.GREEN)
-	Sfx.play("pop")
+	Sfx.play("spray", 0.05, Main.SHOP)
 
 
 # --- Personel ------------------------------------------------------------------
@@ -720,7 +812,22 @@ func _sync_staff() -> void:
 		if not GameState.staff.any(func(p: Dictionary) -> bool: return is_same(p, worker.data)):
 			_workers.erase(worker)
 			worker.fire()
+	for courier in couriers.duplicate():
+		if not GameState.staff.any(func(p: Dictionary) -> bool: return is_same(p, courier.data)):
+			_fire_courier(courier)
+	if _package_point:
+		_package_point.visible = GameState.staff.any(func(p: Dictionary) -> bool: return Staff.role(p) == "kurye")
 	for person in GameState.staff:
+		if Staff.role(person) == "kurye":
+			if not couriers.any(func(c: Courier) -> bool: return is_same(c.data, person)):
+				var courier := Courier.new()
+				courier.data = person
+				courier.shop = self
+				var taken := couriers.map(func(c: Courier) -> int: return c.spot_index)
+				courier.spot_index = 0 if not taken.has(0) else 1
+				add_child(courier)
+				couriers.append(courier)
+			continue
 		if not _workers.any(func(w: Worker) -> bool: return is_same(w.data, person)):
 			var worker := Worker.new()
 			worker.data = person
@@ -728,6 +835,306 @@ func _sync_staff() -> void:
 			add_child(worker)
 			worker.position = DOOR
 			_workers.append(worker)
+
+
+# --- Paket servis ------------------------------------------------------------------
+
+## Tezgâhta paket teslim tabelası ve hazır poşetlerin konduğu altlık (kurye varken görünür).
+var _package_point: Node3D
+
+
+func _build_package_point() -> void:
+	_package_point = Node3D.new()
+	_package_point.position = PACKAGE_SIGN
+	add_child(_package_point)
+	_package_point.add_child(Util.box(Vector3(0.5, 0.012, 0.36), Color("#7c5cff"), Vector3(0, 0.006, -0.08)))
+	var board := Node3D.new()
+	board.position = Vector3(0, 0, 0.12)
+	board.rotation_degrees.x = -12
+	_package_point.add_child(board)
+	board.add_child(Util.box(Vector3(0.025, 0.2, 0.025), Color("#3b2a25"), Vector3(0, 0.1, 0)))
+	board.add_child(Util.box(Vector3(0.66, 0.2, 0.025), Color("#7c5cff"), Vector3(0, 0.29, 0)))
+	board.add_child(Util.box(Vector3(0.6, 0.15, 0.004), Color("#9a80ff"), Vector3(0, 0.29, 0.014)))
+	var text := Util.label3d("PAKET TESLİM", 96, Color.WHITE, Vector3(0, 0.29, 0.018))
+	text.font = UiKit.font(900)
+	text.pixel_size = 0.0011
+	text.outline_size = 0
+	Util.fit_label(text, 0.54, 60)
+	board.add_child(text)
+	_package_point.visible = false
+
+## Siparişin bekleme sabrının kalan oranı (müşteri ya da paket siparişi).
+static func patience_ratio(order: Dictionary) -> float:
+	if order.get("delivery", false):
+		return clampf(order["patience"] / order["max_patience"], 0.0, 1.0)
+	var customer: ShopCustomer = order["customer"]
+	return clampf(customer.food_patience / customer.max_food_patience, 0.0, 1.0)
+
+
+## Kuryelerin yükü: henüz teslim edilmemiş paketlerin taşıma kapasitesine oranı.
+## Yoldaki kurye dönene kadar paket alamadığından onun kapasitesinin yarısı dolu sayılır.
+func delivery_load() -> float:
+	var capacity := couriers.size() * Staff.COURIER_CAPACITY
+	if capacity == 0:
+		return 1.0
+	var pending := 0
+	for order in orders:
+		if order.get("delivery", false):
+			pending += 1
+	for courier in couriers:
+		pending += courier.packages.size()
+		if courier.state == Courier.State.AWAY or courier.state == Courier.State.LEAVING:
+			pending += Staff.COURIER_CAPACITY / 2
+	return float(pending) / capacity
+
+
+## Telefon: kurye varsa ve kuryeler çok yüklü değilse arada bir çalar.
+func _update_calls(delta: float) -> void:
+	if not call.is_empty():
+		call["time"] -= delta
+		if call["time"] <= 0.0:
+			if call["open"]:
+				reject_call(true)
+			else:
+				_miss_call()
+		return
+	if couriers.is_empty() or not GameState.accepting_customers() or GameState.tutorial_active():
+		return
+	_call_timer -= delta
+	if _call_timer > 0.0:
+		return
+	var load := delivery_load()
+	_call_timer = Progression.delivery_interval(GameState.level, couriers.size(), load) * randf_range(0.7, 1.3)
+	if load >= 1.0:
+		return
+	var items := Progression.delivery_order(GameState.level)
+	var price := 0
+	for id in items:
+		price += Items.price(id) * int(items[id])
+	var male := randf() < 0.5
+	call = {
+		"name": (MALE_NAMES if male else FEMALE_NAMES).pick_random(),
+		"address": "%s No:%d" % [STREETS.pick_random(), randi_range(1, 60)],
+		"km": snappedf(randf_range(0.6, 3.5), 0.1),
+		"items": items, "price": price, "time": RING_TIME, "open": false,
+	}
+	register.set_ringing(true)
+	call_changed.emit()
+
+
+## Telefonu açar: sipariş kartı açılır, karar için süre başlar.
+func answer_call() -> void:
+	if call.is_empty() or call["open"]:
+		return
+	call["open"] = true
+	call["time"] = DECIDE_TIME
+	register.set_ringing(false)
+	Sfx.play("tap")
+	call_changed.emit()
+
+
+## Siparişi onaylar: mutfakta paket fişi açılır.
+func accept_call() -> void:
+	if call.is_empty():
+		return
+	var items: Dictionary = call["items"]
+	var count := 0
+	for id in items:
+		count += int(items[id])
+	var patience := Progression.delivery_patience(GameState.level, count) * (1.0 + Decor.patience_bonus(GameState.decor))
+	var order := {
+		"number": _next_number, "customer": null, "delivery": true, "name": call["name"], "address": call["address"],
+		"km": call["km"], "items": items.duplicate(), "filled": {}, "ready": false, "price": call["price"],
+		"patience": patience, "max_patience": patience,
+	}
+	_next_number += 1
+	for id in items:
+		order["filled"][id] = []
+	orders.append(order)
+	call = {}
+	call_changed.emit()
+	Sfx.play("approve")
+	get_tree().create_timer(0.3).timeout.connect(Sfx.play.bind("receipt"))
+	GameState.show_toast("#%d paket sipariş mutfağa düştü (%s)" % [order["number"], order["name"]])
+	order_placed.emit(order)
+	orders_changed.emit()
+
+
+## Siparişi reddeder (ya da karar süresi dolar). Müşteri başka yerden söyler.
+func reject_call(timed_out := false) -> void:
+	if call.is_empty():
+		return
+	GameState.show_toast("%s siparişi %s" % [call["name"], "zaman aşımıyla düştü" if timed_out else "reddedildi"])
+	Sfx.play("error" if timed_out else "tap")
+	call = {}
+	register.set_ringing(false)
+	call_changed.emit()
+
+
+func _miss_call() -> void:
+	GameState.show_toast("Telefon cevapsız kaldı, paket sipariş kaçtı")
+	call = {}
+	register.set_ringing(false)
+	call_changed.emit()
+
+
+## Paket siparişlerin sabrı: mutfakta ve kuryenin kucağında beklerken azalır;
+## biterse sipariş iptal olur.
+func _update_deliveries(delta: float) -> void:
+	for order in orders.duplicate():
+		if order.get("delivery", false):
+			order["patience"] -= delta
+			if order["patience"] <= 0.0:
+				_cancel_delivery(order, null)
+	for courier in couriers:
+		if courier.state != Courier.State.WAITING:
+			continue
+		for order in courier.packages.duplicate():
+			order["patience"] -= delta
+			if order["patience"] <= 0.0:
+				_cancel_delivery(order, courier)
+
+
+func _cancel_delivery(order: Dictionary, courier: Courier) -> void:
+	for id in order["filled"]:
+		for quality in order["filled"][id]:
+			if GameState.prepared.has(id):
+				GameState.add_prepared(id, quality)
+			else:
+				GameState.stock[id] += 1
+				GameState.stock_changed.emit()
+	if courier:
+		courier.drop_package(order)
+	else:
+		orders.erase(order)
+		orders_changed.emit()
+	GameState.record_lost_customer()
+	GameState.add_review(1, "Paketim saatlerce gelmedi, iptal ettim.", order["name"])
+	GameState.show_toast("#%d paket çok gecikti, %s iptal etti!" % [order["number"], order["name"]])
+	Sfx.play("error")
+
+
+## Hazır paketi dükkanda bekleyen, kucağında yer olan kuryeye verir.
+func give_to_courier(order: Dictionary) -> void:
+	if not order["ready"]:
+		GameState.show_toast("#%d henüz hazır değil" % order["number"])
+		Sfx.play("error")
+		return
+	var courier: Courier = null
+	for c in couriers:
+		if c.can_load():
+			courier = c
+			break
+	if courier == null:
+		var all_away := couriers.all(func(c: Courier) -> bool: return c.state != Courier.State.WAITING)
+		GameState.show_toast("Kuryeler yolda, dönünce ver" if all_away else "Kuryenin kucağı dolu! Ona dokunup yola çıkar")
+		Sfx.play("error")
+		return
+	orders.erase(order)
+	orders_changed.emit()
+	var bag := _make_bag()
+	add_child(bag)
+	bag.position = TRAY_SPOT
+	courier.load_package(order, bag)
+	Sfx.play("pop")
+	if courier.is_full():
+		GameState.show_toast("%s doldu (%d paket). Dokun, yola çıksın" % [courier.data["name"], Staff.COURIER_CAPACITY])
+
+
+## Hazır paketleri verebileceğin kurye var mı?
+func courier_waiting() -> bool:
+	return couriers.any(func(c: Courier) -> bool: return c.can_load())
+
+
+## Kuryeye dokununca: kucağında paket varsa yola çıkar.
+func dispatch(courier: Courier) -> void:
+	if courier.state != Courier.State.WAITING:
+		return
+	if courier.packages.is_empty():
+		GameState.show_toast("%s paket bekliyor. Hazır paketi \"Kuryeye Ver\" ile ver" % courier.data["name"])
+		Sfx.play("error")
+		return
+	Sfx.play("approve")
+	GameState.show_toast("%s %d paketle yola çıktı" % [courier.data["name"], courier.packages.size()])
+	courier.depart()
+
+
+## Kurye paketleri teslim etti: her müşteri öder, puan verir, beğenirse bahşiş bırakır.
+func complete_deliveries(courier: Courier, delivered: Array[Dictionary]) -> void:
+	if delivered.is_empty():
+		return
+	var total := 0
+	var tips := 0
+	for order in delivered:
+		var quality_sum := 0
+		var count := 0
+		var spoiled := false
+		var base_price := 0
+		for id in order["filled"]:
+			for quality in order["filled"][id]:
+				quality_sum += quality
+				count += 1
+				base_price += int(Items.PRODUCTS[id]["price"])
+				if quality == 1:
+					spoiled = true
+		var stars := roundi(float(quality_sum) / maxf(count, 1))
+		if patience_ratio(order) < 0.25:
+			stars -= 1
+		var price_ratio := float(order["price"]) / maxf(base_price, 1.0) / Progression.price_tolerance()
+		if price_ratio > 1.7:
+			stars -= 2
+		elif price_ratio > 1.3:
+			stars -= 1
+		stars = clampi(stars, 1, 5)
+		var review: String
+		if spoiled:
+			stars = 1
+			review = "Gelen yemek bozuktu! Paket servisten bir daha söylemem."
+		elif stars >= 5:
+			review = ["Paket sıcacık ve çabucak geldi, kurye de çok kibardı!", "Evde dükkan tadı! Hızlı teslimat, harika.", "Kurye uçarak getirdi, her şey tam kıvamında."].pick_random()
+		elif stars >= 4:
+			review = ["Paket servis gayet iyiydi.", "Lezzetli, teslimat biraz sürdü ama değdi."].pick_random()
+		elif stars >= 3:
+			review = ["Fena değil ama paket soğumuştu.", "İdare eder, teslimat geç kaldı."].pick_random()
+		else:
+			review = ["Paket çok geç geldi, yemekler buz gibiydi.", "Siparişim geldiğinde iştahım kaçmıştı."].pick_random()
+		if price_ratio > 1.3 and not spoiled:
+			review += " Fiyatlar da pahalı."
+		var tip := roundi(order["price"] * 0.15) if stars == 5 else 0
+		total += int(order["price"])
+		tips += tip
+		GameState.record_sale(order["price"], tip)
+		GameState.add_review(stars, review, order["name"])
+		GameState.add_xp(Progression.sale_xp(count, stars))
+	GameState.money += total + tips
+	deliveries_completed.emit(courier, total, tips)
+	if tips > 0:
+		register.add_tip(tips)
+	Sfx.play("kaching")
+	var text := "%s %d paketi teslim etti: +₺%d" % [courier.data["name"], delivered.size(), total]
+	if tips > 0:
+		text += " (+₺%d bahşiş)" % tips
+	GameState.show_toast(text)
+
+
+## Gün bitebilir mi: çağrı yok, mutfakta paket fişi yok, kuryeler dönmüş ve kucakları boş.
+func deliveries_done() -> bool:
+	if not call.is_empty():
+		return false
+	for order in orders:
+		if order.get("delivery", false):
+			return false
+	for courier in couriers:
+		if courier.state != Courier.State.WAITING or not courier.packages.is_empty():
+			return false
+	return true
+
+
+func _fire_courier(courier: Courier) -> void:
+	couriers.erase(courier)
+	for order in courier.packages.duplicate():
+		_cancel_delivery(order, courier)
+	courier.queue_free()
 
 
 ## İçerideki müşteri sayısı (gün sonunu belirlemek için).
@@ -866,6 +1273,8 @@ func _build_room() -> void:
 	register.position = Vector3(0.75, 0.98, 1.15)
 	register.rotation_degrees.y = -10
 	add_child(register)
+	register.phone_tapped.connect(answer_call)
+	_build_package_point()
 
 
 ## Harabe hali: duvar lekeleri, zemin çatlakları, çöp yığınları, örümcek ağları
@@ -1052,6 +1461,10 @@ func _update_door(delta: float) -> void:
 		if (child is ShopCustomer or child is Worker) and Vector2(child.position.x, child.position.z).distance_to(Vector2(0, -10.1)) < 1.5:
 			near = true
 			break
+	# Kapı açılmaya başlarken kapı zili çalar.
+	if near and not _door_open:
+		Sfx.play("door_bell", 0.03, Main.SHOP)
+	_door_open = near
 	_door.rotation_degrees.y = lerpf(_door.rotation_degrees.y, -85.0 if near else 0.0, 6.0 * delta)
 
 

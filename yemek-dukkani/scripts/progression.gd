@@ -14,8 +14,9 @@ const MAX_LEVEL := 30
 
 ## Geliştirmeler. costs[i] ve levels[i]: i. kademenin fiyatı ve gereken seviye.
 const UPGRADES := {
-	"grill_slot": { "name": "Ekstra Izgara Yeri", "icon": "flame", "desc": "Izgaraya +1 pişirme yeri", "costs": [90, 180, 320], "levels": [2, 4, 6] },
+	"grill_slot": { "name": "Ekstra Izgara Yeri", "icon": "flame", "desc": "Izgaraya +1 pişirme yeri", "costs": [90, 180, 320, 480, 680, 900], "levels": [2, 4, 6, 8, 10, 12] },
 	"fryer_slot": { "name": "Ekstra Fritöz Sepeti", "icon": "cooking-pot", "desc": "Fritöze +1 sepet", "costs": [80, 200], "levels": [3, 6] },
+	"oven_slot": { "name": "Ekstra Fırın Yeri", "icon": "flame", "desc": "Fırına +1 pişirme yeri", "costs": [160, 320], "levels": [4, 7] },
 	"grill_speed": { "name": "Güçlü Izgara", "icon": "zap", "desc": "Izgara %15 daha hızlı pişirir", "costs": [70, 150, 280], "levels": [2, 4, 7] },
 	"fryer_speed": { "name": "Güçlü Fritöz", "icon": "trending-up", "desc": "Fritöz %15 daha hızlı pişirir", "costs": [60, 140, 260], "levels": [3, 5, 8] },
 	"tables": { "name": "Yeni Masalar", "icon": "armchair", "desc": "Salona +2 masa", "costs": [120], "levels": [3] },
@@ -24,6 +25,7 @@ const UPGRADES := {
 
 const BASE_GRILL_SLOTS := 3
 const BASE_FRYER_SLOTS := 2
+const BASE_OVEN_SLOTS := 2
 const BASE_TABLES := 4
 
 
@@ -87,12 +89,37 @@ static func food_patience(level: int, item_count: int) -> float:
 	return base
 
 
+## Paket servis telefonu ne sıklıkla çalar (saniye). Kurye sayısı arttıkça sıklaşır;
+## kuryelerin yükü (yoldaki ve bekleyen paketlerin taşıma kapasitesine oranı)
+## arttıkça seyrekleşir, kapasite dolunca hiç çalmaz.
+static func delivery_interval(level: int, couriers: int, load: float) -> float:
+	var base := maxf(14.0, 32.0 - 1.6 * (level - 1)) / maxf(couriers, 1)
+	if calm():
+		base *= CALM_SPAWN_FACTOR
+	return base * (1.0 + 3.0 * load * load) * lerpf(1.4, 0.8, clampf((GameState.rating() - 1.0) / 4.0, 0.0, 1.0)) * price_demand()
+
+
+## Paket siparişin hazırlanıp kuryeye verilme süresi (saniye).
+static func delivery_patience(level: int, item_count: int) -> float:
+	return food_patience(level, item_count) * 1.4 + 20.0
+
+
+## Paket sipariş: normal siparişten biraz büyük (aile, ofis), arada ikinci içecek.
+static func delivery_order(level: int) -> Dictionary:
+	var order := random_order(level)
+	var foods: Array = order.keys().filter(func(id: String) -> bool: return Items.PRODUCTS[id]["device"] != "")
+	if not foods.is_empty() and randf() < 0.6:
+		var id: String = foods.pick_random()
+		order[id] = int(order[id]) + 1
+	return order
+
+
 ## Yeni müşteri gelme aralığı (saniye). İyi puan müşteriyi sıklaştırır.
 static func spawn_interval(level: int, rating: float) -> float:
 	var base := maxf(3.5, 15.0 - 0.9 * (level - 1))
 	if calm():
 		base *= CALM_SPAWN_FACTOR
-	return base * lerpf(1.4, 0.8, clampf((rating - 1.0) / 4.0, 0.0, 1.0))
+	return base * lerpf(1.4, 0.8, clampf((rating - 1.0) / 4.0, 0.0, 1.0)) * price_demand()
 
 
 static func patience(level: int, item_count: int, comfort_level: int) -> float:
@@ -108,15 +135,49 @@ static func max_queue(level: int) -> int:
 	return 1 if calm() else mini(3 + level / 2, 7)
 
 
+## Müşterinin ödemeye razı olduğu fiyat oranı: puan ve dekor arttıkça yükselir.
+## 1.0 = menüdeki taban fiyat. Örn. 4.5 yıldız ve iyi dekorla ~1.25.
+static func price_tolerance() -> float:
+	var decor := 0
+	for key in ["clean", "register", "paint", "windows", "lamps", "sign"]:
+		if GameState.decor.get(key, false):
+			decor += 1
+	decor += int(GameState.decor.get("plants", 0))
+	return clampf(1.0 + 0.12 * (GameState.rating() - 3.5) + 0.015 * decor, 0.8, 1.5)
+
+
+## Ürünün fiyatının müşteriye göre ne kadar pahalı geldiği (1 = makul).
+static func price_ratio(id: String) -> float:
+	return float(GameState.price_factors.get(id, 1.0)) / price_tolerance()
+
+
+## Menü pahalıysa müşteriler seyrek gelir, ucuzsa sık: müşteri geliş aralığı çarpanı.
+static func price_demand() -> float:
+	var total := 0.0
+	var ids := Items.unlocked_ids()
+	for id in ids:
+		total += price_ratio(id)
+	return clampf(pow(total / maxf(ids.size(), 1.0), 1.8), 0.55, 3.0)
+
+
 static func random_order(level: int) -> Dictionary:
-	var foods: Array = ["tavuk", "tavuk_sis", "kofte", "patates"]
-	foods.shuffle()
+	var foods: Array = []
+	for id in Items.unlocked_ids():
+		if Items.PRODUCTS[id]["device"] != "":
+			foods.append(id)
+	var drinks := Items.unlocked_ids("")
+	# Pahalı ürün daha az seçilir: ağırlıklı karıştırma (ucuz olan öne geçer).
+	var keys := {}
+	for id in foods:
+		keys[id] = -log(maxf(randf(), 0.0001)) * pow(price_ratio(id), 2.0)
+	foods.sort_custom(func(a: String, b: String) -> bool: return keys[a] < keys[b])
 	var kinds := 1
 	if calm():
 		# Sakin dönemde tek ürün, bazen yanında kola.
 		var simple := { foods[0]: 1 }
-		if randf() < 0.3:
-			simple["kola"] = 1
+		var drink := _pick_drink(drinks)
+		if randf() < 0.3 / pow(price_ratio(drink), 1.5):
+			simple[drink] = 1
 		return simple
 	if level >= 6:
 		kinds = randi_range(1, 3)
@@ -125,9 +186,22 @@ static func random_order(level: int) -> Dictionary:
 	var order := {}
 	for i in kinds:
 		order[foods[i]] = 2 if level >= 5 and randf() < 0.25 else 1
-	if randf() < 0.3 + 0.03 * level:
-		order["kola"] = 1
+	var drink := _pick_drink(drinks)
+	if randf() < (0.3 + 0.03 * level) / pow(price_ratio(drink), 1.5):
+		order[drink] = 1
 	return order
+
+
+## İçeceklerden biri: ucuz olan daha çok seçilir.
+static func _pick_drink(drinks: Array[String]) -> String:
+	var best := drinks[0]
+	var best_key := INF
+	for id in drinks:
+		var key := -log(maxf(randf(), 0.0001)) * pow(price_ratio(id), 2.0)
+		if key < best_key:
+			best_key = key
+			best = id
+	return best
 
 
 static func sale_xp(item_count: int, stars: int) -> int:

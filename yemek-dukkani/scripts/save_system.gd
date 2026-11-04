@@ -104,8 +104,8 @@ func reset_progress() -> void:
 
 func _fresh_state() -> Dictionary:
 	return {
-		"money": Decor.START_BUDGET, "stock": { "tavuk": 3, "tavuk_sis": 3, "kofte": 3, "patates": 3, "kola": 5 },
-		"prepared": { "tavuk": [], "tavuk_sis": [], "kofte": [], "patates": [] }, "reviews": [], "level": 1, "xp": 0,
+		"money": Decor.START_BUDGET, "stock": { "tavuk": 3, "tavuk_sis": 3, "kofte": 3, "patates": 3, "kola": 5, "ayran": 0, "lahmacun": 0, "pizza": 0, "pide": 0 },
+		"prepared": { "tavuk": [], "tavuk_sis": [], "kofte": [], "patates": [], "lahmacun": [], "pizza": [], "pide": [] }, "reviews": [], "level": 1, "xp": 0,
 		"upgrades": {}, "day": 1, "minutes": GameState.OPEN_TIME, "is_open": true, "staff": [],
 		"candidates": Staff.make_candidates(), "shop_name": GameState.DEFAULT_SHOP_NAME, "setup_done": false,
 		"decor": Decor.default_state(), "tutorial_step": -1,

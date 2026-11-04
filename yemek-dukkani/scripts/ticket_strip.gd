@@ -43,8 +43,7 @@ func _process(_delta: float) -> void:
 		var refs: Dictionary = _cards.get(order["number"], {})
 		if refs.is_empty():
 			continue
-		var customer: ShopCustomer = order["customer"]
-		var ratio := clampf(customer.food_patience / customer.max_food_patience, 0.0, 1.0)
+		var ratio := Shop.patience_ratio(order)
 		var bar: ProgressBar = refs["bar"]
 		bar.value = ratio
 		bar.add_theme_stylebox_override("fill", _bar_styles[0 if ratio < 0.25 else (1 if ratio < 0.55 else 2)])
@@ -121,11 +120,17 @@ func _make_card(order: Dictionary) -> Dictionary:
 	var number := UiKit.label("#%d" % order["number"], 26, UiKit.TEXT, 900)
 	number.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(number)
-	var customer: ShopCustomer = order["customer"]
-	if customer.takeaway:
-		head.add_child(UiKit.label("PAKET", 17, UiKit.PURPLE, 900))
+	var delivery: bool = order.get("delivery", false)
+	if delivery:
+		# Telefonla gelen paket servis: kurye götürür.
+		head.add_child(UiKit.icon_rect("package", UiKit.PURPLE, 22))
+		head.add_child(UiKit.label("KURYE", 17, UiKit.PURPLE, 900))
 	else:
-		head.add_child(UiKit.label(customer.customer_name, 18, UiKit.MUTED))
+		var customer: ShopCustomer = order["customer"]
+		if customer.takeaway:
+			head.add_child(UiKit.label("PAKET", 17, UiKit.PURPLE, 900))
+		else:
+			head.add_child(UiKit.label(customer.customer_name, 18, UiKit.MUTED))
 
 	var bar := ProgressBar.new()
 	bar.max_value = 1.0
@@ -166,7 +171,12 @@ func _make_card(order: Dictionary) -> Dictionary:
 			UiKit.candy(button, UiKit.ORANGE, Color.WHITE)
 			button.pressed.connect(shop.fill_order.bind(order))
 	else:
-		if ready:
+		if ready and delivery:
+			button.text = "Kuryeye Ver"
+			UiKit.set_icon(button, "package", 24)
+			UiKit.candy(button, UiKit.PURPLE, Color.WHITE)
+			button.pressed.connect(shop.give_to_courier.bind(order))
+		elif ready:
 			button.text = "Teslim Et"
 			UiKit.set_icon(button, "hand-platter", 24)
 			UiKit.candy(button, UiKit.GREEN, Color.WHITE)

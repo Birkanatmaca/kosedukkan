@@ -2,11 +2,21 @@ class_name CashRegister
 extends Node3D
 
 ## Tezgâhtaki yazar kasa: dijital ekran, açılan para çekmecesi, yanında kart
-## okutulan POS cihazı ve bahşiş geldikçe dolan kavanoz.
+## okutulan POS cihazı, bahşiş geldikçe dolan kavanoz ve paket servis telefonu
+## (kurye varken paket siparişi gelince çalar; dokununca sipariş açılır).
+
+signal phone_tapped
 
 const DRAWER_OPEN_Z := 0.3
 const NOTE_COLORS := [Color("#9b6fc0"), Color("#3f8fd0"), Color("#e0873a"), Color("#3fa866"), Color("#d9566a")]
 const MAX_JAR_COINS := 40
+## Kasa modelinin dokunmatik ekranı (kasaya göre): ortası, yarı genişlik/yükseklik
+## yönleri ve dışa bakan yüzey normali. Blender'da modelden ölçüldü; ekran 4:3 ve
+## geriye ~35° eğik. Kasa ekranı arayüzü bu dikdörtgenin üstüne oturur.
+const SCREEN_CENTER := Vector3(0.009, 0.317, -0.076)
+const SCREEN_RIGHT := Vector3(0.166, 0, 0)
+const SCREEN_UP := Vector3(0, 0.102, -0.072)
+const SCREEN_NORMAL := Vector3(0, 0.575, 0.818)
 
 var _drawer: Node3D
 var _display: Label3D
@@ -16,12 +26,18 @@ var _jar_coins: Node3D
 var _jar_count := 0
 var _jar_label: Label3D
 var _drawer_tween: Tween
+var _phone: Node3D
+var _phone_screen: StandardMaterial3D
+var _phone_holder: Node3D
+var _ringing := false
+var _ring_t := 0.0
 
 
 func _ready() -> void:
 	_build_register()
 	_build_pos()
 	_build_jar()
+	_build_phone()
 	show_idle()
 	# Kavanoz günün bahşişini gösterir: yeniden açılınca o kadar dolu, yeni günde boş.
 	_fill_jar(false)
@@ -172,6 +188,62 @@ func _build_pos() -> void:
 	pos.add_child(_pos_label)
 	_pos_led = Util.sphere(0.01, Color("#9aa4ae"), Vector3(0.045, 0.235, 0.03))
 	pos.add_child(_pos_led)
+
+
+## Telefon çalıyor mu: titrer, ekranı yanıp söner, üstünde "PAKET!" baloncuğu çıkar.
+func is_ringing() -> bool:
+	return _ringing
+
+
+## Telefonun üstü (Hud "PAKET!" rozetini buraya koyar).
+func phone_top() -> Vector3:
+	return _phone_holder.global_position + Vector3(0, 0.3, 0)
+
+
+func set_ringing(on: bool) -> void:
+	if on == _ringing:
+		return
+	_ringing = on
+	_ring_t = 0.0
+	if not on:
+		_phone.rotation = Vector3(deg_to_rad(-22.0), 0, 0)
+		_phone_screen.emission = Color("#1d3550")
+
+
+func _process(delta: float) -> void:
+	if not _ringing:
+		return
+	# İki kısa çınlama, sonra kısa sessizlik; çınlarken titrer. Mutfaktayken de duyulur.
+	if fmod(_ring_t, 2.0) + delta >= 2.0 or _ring_t == 0.0:
+		Sfx.play("phone_ring")
+	_ring_t += delta
+	var phase := fmod(_ring_t, 2.0)
+	var buzzing := phase < 0.9
+	_phone.rotation = Vector3(deg_to_rad(-22.0), 0, deg_to_rad(5.0 * sin(_ring_t * 55.0)) if buzzing else 0.0)
+	_phone_screen.emission = Color("#3fdc7a") if int(_ring_t * 4.0) % 2 == 0 else Color("#1d6b40")
+
+
+func _build_phone() -> void:
+	var holder := Node3D.new()
+	holder.position = Vector3(0.22, 0, 0.27)
+	add_child(holder)
+	_phone_holder = holder
+	# Masa altlığı
+	holder.add_child(Util.box(Vector3(0.11, 0.025, 0.09), Color("#2c3038"), Vector3(0, 0.0125, 0)))
+	_phone = Node3D.new()
+	_phone.position = Vector3(0, 0.025, 0)
+	_phone.rotation = Vector3(deg_to_rad(-22.0), 0, 0)
+	holder.add_child(_phone)
+	_phone.add_child(Util.box(Vector3(0.085, 0.165, 0.014), Color("#1b1e24"), Vector3(0, 0.0825, 0)))
+	_phone_screen = StandardMaterial3D.new()
+	_phone_screen.albedo_color = Color("#10161f")
+	_phone_screen.emission_enabled = true
+	_phone_screen.emission = Color("#1d3550")
+	_phone_screen.emission_energy_multiplier = 1.4
+	var screen := Util.box(Vector3(0.074, 0.145, 0.002), _phone_screen, Vector3(0, 0.0835, 0.0075))
+	_phone.add_child(screen)
+	var body := Util.collider_box(holder, Vector3(0.22, 0.3, 0.2), Vector3(0, 0.12, 0))
+	body.set_meta("tap", func() -> void: phone_tapped.emit())
 
 
 func _build_jar() -> void:

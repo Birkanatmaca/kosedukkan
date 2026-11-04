@@ -76,6 +76,20 @@ func _ready() -> void:
 	v.add_child(_sound_btn)
 	_refresh_sound()
 
+	# Ses Ayarları: müzik, kasa, mutfak, müşteriler... ayrı ayrı aç/kapa ve ses düzeyi
+	var sound_settings := Button.new()
+	sound_settings.text = "Ses Ayarları"
+	sound_settings.custom_minimum_size = Vector2(0, 76)
+	sound_settings.add_theme_font_size_override("font_size", 24)
+	UiKit.set_icon(sound_settings, "music", 30)
+	UiKit.candy(sound_settings, Color("#ffe6d2"), UiKit.TEXT)
+	sound_settings.pressed.connect(func() -> void:
+		var page := SoundSettingsUI.new()
+		page.closed.connect(_refresh_sound)
+		get_parent().add_child(page)
+	)
+	v.add_child(sound_settings)
+
 	_reset_btn = Button.new()
 	_reset_btn.custom_minimum_size = Vector2(0, 76)
 	_reset_btn.add_theme_font_size_override("font_size", 24)

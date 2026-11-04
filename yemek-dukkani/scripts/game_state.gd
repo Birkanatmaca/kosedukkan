@@ -17,6 +17,8 @@ signal day_ended(stats: Dictionary)
 signal decor_changed
 signal setup_finished
 signal tutorial_changed(step: int)
+## Toptancı fiyatları değişti ya da satış fiyatı ayarlandı
+signal market_changed
 
 const MAX_REVIEWS := 30
 ## Oyuncu isim vermezse dükkanın adı (oyunun adıyla aynı)
@@ -34,6 +36,9 @@ var minutes := float(OPEN_TIME)
 var is_open := true
 ## Gün içi kayıtlar: gelir, bahşiş, giderler, müşteri sayıları
 var day_stats := {}
+## Biten günlerin özeti (takvim için): gün, tarih, gelir/gider kalemleri,
+## kime ne kadar maaş ödendiği, servis edilen ve kaybedilen müşteri.
+var history: Array[Dictionary] = []
 ## İşe alınmış personel ve günün adayları
 var staff: Array[Dictionary] = []
 var candidates: Array[Dictionary] = []
@@ -128,7 +133,8 @@ func to_dict() -> Dictionary:
 		"day": day, "minutes": minutes, "is_open": is_open, "day_stats": day_stats,
 		"staff": staff, "candidates": candidates,
 		"shop_name": shop_name, "setup_done": setup_done, "decor": decor,
-		"tutorial_step": tutorial_step,
+		"tutorial_step": tutorial_step, "history": history,
+		"batches": batches, "market": market, "price_factors": price_factors,
 	}
 
 
@@ -154,10 +160,22 @@ func from_dict(data: Dictionary) -> void:
 	candidates.clear()
 	for person in data.get("candidates", []):
 		candidates.append(_int_fields(person))
+	ensure_courier_candidates()
 	shop_name = str(data.get("shop_name", shop_name))
 	setup_done = bool(data.get("setup_done", setup_done))
 	decor = _merge(Decor.default_state(), data.get("decor", {}), true)
 	tutorial_step = int(data.get("tutorial_step", -1))
+	history.clear()
+	for record in data.get("history", []):
+		history.append(record)
+	batches = {}
+	for id in data.get("batches", {}):
+		batches[id] = (data["batches"][id] as Array).map(func(d) -> int: return int(d))
+	market = data.get("market", {}).duplicate(true)
+	price_factors = {}
+	for id in data.get("price_factors", {}):
+		price_factors[id] = float(data["price_factors"][id])
+	_ensure_market()
 	# Tanıtım yarıda kaldıysa kapalı başlasın (oyun tanıtım modunda takılmasın).
 	tutorial_step = -1
 
@@ -199,9 +217,15 @@ var money := Decor.START_BUDGET:
 		money_changed.emit(money)
 
 ## Çiğ malzeme ve hazır içecek stoğu.
-var stock := { "tavuk": 3, "tavuk_sis": 3, "kofte": 3, "patates": 3, "kola": 5 }
+var stock := { "tavuk": 3, "tavuk_sis": 3, "kofte": 3, "patates": 3, "kola": 5, "ayran": 0, "lahmacun": 0, "pizza": 0, "pide": 0 }
+## Stoktaki her malzemenin son kullanma günü (eskiden yeniye). stock ile aynı adette.
+var batches := {}
+## Toptancı borsası: ürün -> { factor, deal, price, history } (Exchange)
+var market := {}
+## Satış fiyatı çarpanı: ürün -> 0.5–2.0 (menüdeki taban fiyata göre)
+var price_factors := {}
 ## Pişmiş, servise hazır ürünler: ürün -> kalite listesi (5 tam, 3 fazla, 2 az pişmiş).
-var prepared := { "tavuk": [], "tavuk_sis": [], "kofte": [], "patates": [] }
+var prepared := { "tavuk": [], "tavuk_sis": [], "kofte": [], "patates": [], "lahmacun": [], "pizza": [], "pide": [] }
 var reviews: Array[Dictionary] = []
 var level := 1
 var xp := 0
@@ -210,8 +234,9 @@ var upgrades := {}
 
 
 func _ready() -> void:
-	candidates = Staff.make_candidates(3, staff)
+	candidates = Staff.make_candidates(3, staff, level)
 	_reset_stats()
+	_ensure_market()
 
 
 func _process(delta: float) -> void:
@@ -219,6 +244,10 @@ func _process(delta: float) -> void:
 	if setup_done and not tutorial_active() and is_open and minutes < CLOSE_TIME:
 		var before := minutes
 		minutes = minf(minutes + delta * (CLOSE_TIME - OPEN_TIME) / DAY_SECONDS, CLOSE_TIME)
+		# Toptancı fiyatları gün içinde birkaç kez değişir.
+		for tick in Exchange.TICKS:
+			if before < tick and minutes >= tick:
+				tick_market()
 		if before < LAST_ORDER and minutes >= LAST_ORDER:
 			show_toast("Son sipariş saati! Dükkan 22:00'de kapanıyor")
 
@@ -238,29 +267,55 @@ func end_day() -> void:
 		return
 	is_open = false
 	var quitters: Array[String] = []
+	var paid: Array[Dictionary] = []
 	for person in staff.duplicate():
 		var wage: int = person["wage"]
 		if money >= wage:
 			money -= wage
 			day_stats["wages"] += wage
+			paid.append({ "name": person["name"], "wage": wage })
 		else:
 			staff.erase(person)
 			quitters.append(person["name"])
 	day_stats["quitters"] = quitters
 	day_stats["money"] = money
+	_record_day(paid, quitters)
 	if not quitters.is_empty():
 		staff_changed.emit()
 	day_ended.emit(day_stats)
+
+
+## Günün özetini takvim geçmişine yazar.
+func _record_day(paid: Array[Dictionary], quitters: Array[String]) -> void:
+	var record := {
+		"day": day, "date": Time.get_date_string_from_system(), "money": money,
+		"wages_paid": paid, "quitters": quitters,
+	}
+	for key in ["revenue", "tips", "supplies", "upgrades", "wages", "served", "lost"]:
+		record[key] = int(day_stats.get(key, 0))
+	history.assign(history.filter(func(r: Dictionary) -> bool: return int(r["day"]) != day))
+	history.append(record)
+
+
+## Günün net kazancı: gelir + bahşiş − malzeme − geliştirme − maaş.
+static func net_of(record: Dictionary) -> int:
+	return int(record.get("revenue", 0)) + int(record.get("tips", 0)) - int(record.get("supplies", 0)) 		- int(record.get("upgrades", 0)) - int(record.get("wages", 0))
 
 
 func start_day() -> void:
 	day += 1
 	minutes = OPEN_TIME
 	is_open = true
-	candidates = Staff.make_candidates(3, staff)
+	candidates = Staff.make_candidates(3, staff, level)
 	_reset_stats()
+	tick_market()
 	staff_changed.emit()
 	day_started.emit(day)
+	var spoiled := 0
+	for id in batches:
+		spoiled += expired_count(id)
+	if spoiled > 0:
+		show_toast("%d malzemenin son kullanma tarihi geçti! Market'ten atabilirsin" % spoiled)
 
 
 func record_sale(amount: int, tip: int) -> void:
@@ -284,8 +339,10 @@ func record_lost_customer() -> void:
 
 
 func hire(index: int) -> bool:
-	if staff.size() >= Staff.MAX_STAFF:
-		show_toast("En fazla %d çalışan alabilirsin" % Staff.MAX_STAFF)
+	var job := Staff.role(candidates[index])
+	var limit: int = Staff.ROLES[job]["max"]
+	if Staff.count(staff, job) >= limit:
+		show_toast("En fazla %d %s alabilirsin" % [limit, Staff.ROLES[job]["name"].to_lower()])
 		return false
 	staff.append(candidates[index])
 	candidates.remove_at(index)
@@ -319,7 +376,19 @@ func add_xp(amount: int) -> void:
 		xp -= Progression.xp_needed(level)
 		level += 1
 		level_up.emit(level)
+		ensure_courier_candidates()
 	xp_changed.emit()
+
+
+## Kurye açıldığı seviyeye gelince (ya da eski kayıtta) aday listesine kuryeler eklenir.
+func ensure_courier_candidates() -> void:
+	if level < int(Staff.ROLES["kurye"]["unlock"]):
+		return
+	if Staff.count(candidates, "kurye") > 0 or Staff.count(staff, "kurye") > 0:
+		return
+	var all: Array[Dictionary] = staff + candidates
+	candidates.append_array(Staff.make_people(["kurye", "kurye"] as Array[String], all))
+	staff_changed.emit()
 
 
 func upgrade_level(id: String) -> int:
@@ -362,23 +431,96 @@ func available(id: String) -> int:
 	return stock[id]
 
 
+## Toptancıdan bir paket alır: fiyat borsadaki güncel fiyattır, son kullanma
+## günü alındığı güne raf ömrü eklenerek yazılır.
 func buy_pack(id: String) -> bool:
-	var cost: int = Items.PRODUCTS[id]["pack_price"]
+	var cost := pack_price(id)
 	if money < cost:
 		return false
 	money -= cost
 	day_stats["supplies"] += cost
+	var deal: String = market[id]["deal"]
+	for i in Items.PACK_SIZE:
+		(batches[id] as Array).append(day + Exchange.shelf_life(id, deal))
+	(batches[id] as Array).sort()
 	stock[id] += Items.PACK_SIZE
 	stock_changed.emit()
 	return true
 
 
+func pack_price(id: String) -> int:
+	return int(market[id]["price"])
+
+
 func take_stock(id: String) -> bool:
+	return take_stock_item(id) >= 0
+
+
+## Stoktan en eski malzemeyi alır. Döner: -1 yok, 0 taze, 1 tarihi geçmiş.
+func take_stock_item(id: String) -> int:
 	if stock[id] <= 0:
-		return false
+		return -1
 	stock[id] -= 1
+	var expiry: int = (batches[id] as Array).pop_front() if not (batches[id] as Array).is_empty() else day
 	stock_changed.emit()
-	return true
+	return 1 if expiry < day else 0
+
+
+## Tarihi geçmiş malzeme sayısı.
+func expired_count(id: String) -> int:
+	var n := 0
+	for expiry in batches.get(id, []):
+		if expiry < day:
+			n += 1
+	return n
+
+
+## En yakın son kullanma günü (stok yoksa -1).
+func next_expiry(id: String) -> int:
+	var list: Array = batches.get(id, [])
+	for expiry in list:
+		if expiry >= day:
+			return expiry
+	return -1
+
+
+## Tarihi geçenleri çöpe atar; atılan adedi döner.
+func discard_expired(id: String) -> int:
+	var n := expired_count(id)
+	if n == 0:
+		return 0
+	batches[id] = (batches[id] as Array).filter(func(expiry: int) -> bool: return expiry >= day)
+	stock[id] -= n
+	stock_changed.emit()
+	return n
+
+
+## Borsa: bütün malzemelerin fiyatı bir adım oynar.
+func tick_market() -> void:
+	for id in Items.PRODUCTS:
+		market[id] = Exchange.step(id, market.get(id, Exchange.fresh(id)))
+	market_changed.emit()
+
+
+## Satış fiyatı çarpanını ayarlar (0.5–2.0).
+func set_price_factor(id: String, factor: float) -> void:
+	price_factors[id] = clampf(snappedf(factor, 0.05), 0.5, 2.0)
+	market_changed.emit()
+
+
+## Eksik borsa kaydı ve stoğun son kullanma günlerini tamamlar (eski kayıtlar için).
+func _ensure_market() -> void:
+	for id in Items.PRODUCTS:
+		if not market.has(id):
+			market[id] = Exchange.fresh(id)
+		if not batches.has(id):
+			batches[id] = []
+		var list: Array = batches[id]
+		while list.size() < int(stock.get(id, 0)):
+			list.append(day + Exchange.SHELF_LIFE.get(id, 3))
+		while list.size() > int(stock.get(id, 0)):
+			list.pop_back()
+		list.sort()
 
 
 func add_prepared(id: String, quality: int) -> void:
@@ -392,9 +534,8 @@ func take_for_order(id: String) -> int:
 		var quality: int = prepared[id].pop_front()
 		prepared_changed.emit()
 		return quality
-	stock[id] -= 1
-	stock_changed.emit()
-	return 5
+	# Pişirilmeyen ürün (kola) doğrudan stoktan gelir; tarihi geçmişse bozuktur.
+	return 1 if take_stock_item(id) == 1 else 5
 
 
 func add_review(stars: int, text: String, customer_name: String) -> void:

@@ -52,6 +52,12 @@ const CHARACTERS := {
 			"apron": Color("#2c5d38"), "gloves": Color("#60abcd"),
 		},
 	},
+	# Kurye: kendi kıyafetiyle (maskesiz, yeniden boyanmaz); dükkanda beklerken telefonuyla konuşur.
+	"kurye": {
+		"model": "res://assets/models/characters/kurye.glb",
+		"anims": { "walk": "Walking", "idle": "Phone_Conversation", "run": "Running" },
+		"scale": 1.06, "sit_hips": 0.6,
+	},
 }
 const BLEND := 0.25
 
@@ -99,9 +105,10 @@ func build_model(character: String, look: Dictionary) -> void:
 				_player.get_animation(anim_name).loop_mode = Animation.LOOP_LINEAR
 				break
 	for mesh: MeshInstance3D in _model.find_children("*", "MeshInstance3D", true, false):
-		var mat := CharacterSkin.material(mesh.get_active_material(0), _info["mask"], _info["refs"], look, _info.get("mask2", ""))
-		mesh.material_override = mat
-		_materials.append(mat)
+		if _info.has("mask"):
+			var mat := CharacterSkin.material(mesh.get_active_material(0), _info["mask"], _info["refs"], look, _info.get("mask2", ""))
+			mesh.material_override = mat
+			_materials.append(mat)
 		if mesh.mesh and mesh.mesh.get_blend_shape_count() > 0:
 			_face = mesh
 			for key in FACE_KEYS:
@@ -180,6 +187,12 @@ func set_mood(new_mood: int) -> void:
 func animate_walk(_t: float, carrying: bool) -> void:
 	_carrying = carrying
 	_play("walk")
+
+
+## Koşar (kurye paketleri götürürken / acele ederken).
+func animate_run(carrying: bool) -> void:
+	_carrying = carrying
+	_play("run" if _anims.has("run") else "walk")
 
 
 func relax(_delta: float, carrying: bool, sitting: bool) -> void:

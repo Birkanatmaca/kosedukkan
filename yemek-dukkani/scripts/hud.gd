@@ -18,6 +18,15 @@ var main: Main
 
 var _root: Control
 var _portraits := PortraitStudio.new()
+var _calendar: CalendarUI
+var _delivery_call: DeliveryCallUI
+## kurye -> başının üstündeki kart
+var _courier_cards := {}
+var _phone_badge: Button
+var _order_entry: OrderEntry
+var _pos_backdrop: ColorRect
+## Mutfak kamera açısı düğmeleri: açı -> buton
+var _view_buttons := {}
 ## Dükkan panelindeki sayaçlar: sırada / hazırlanıyor / hazır
 var _sum_queue: Label
 var _sum_cooking: Label
@@ -33,6 +42,11 @@ var _toast: PanelContainer
 var _toast_label: Label
 var _toast_tween: Tween
 var _market_stock := {}
+## Borsa kartları: ürün -> etiket ve düğmeler
+var _market_refs := {}
+## Menü fiyat satırları: ürün -> etiketler
+var _menu_refs := {}
+var _tolerance_label: Label
 var _kitchen_buttons := {}
 var _ready_labels: Array[Dictionary] = []
 var _reviews_overlay: Control
@@ -98,7 +112,23 @@ func _ready() -> void:
 	if not GameState.setup_done:
 		_setup = SetupUI.new()
 		_root.add_child(_setup)
+	# Paket servis çağrısı: üstte bildirim, açılınca onay/ret kartı.
+	_delivery_call = DeliveryCallUI.new()
+	_delivery_call.shop = main.shop
+	_delivery_call.top_offset = 112.0
+	_root.add_child(_delivery_call)
 	_build_toast()
+	# Kasa ekranı açıkken arka plan bulanıklaşır (üst bar ve alt menü net kalır).
+	_pos_backdrop = OrderEntry.backdrop()
+	_pos_backdrop.modulate.a = 0.0
+	_pos_backdrop.visible = false
+	_root.add_child(_pos_backdrop)
+	_root.move_child(_pos_backdrop, 0)
+	_order_entry = OrderEntry.new()
+	_root.add_child(_order_entry)
+	_order_entry.confirmed.connect(func(c: ShopCustomer) -> void: main.shop.take_order(c))
+	_order_entry.cancelled.connect(func(_c: ShopCustomer) -> void: main.focus_register(false))
+	main.shop.order_requested.connect(_open_order_entry)
 	_payment = PaymentPanel.new()
 	_root.add_child(_payment)
 	_build_reviews()
@@ -127,6 +157,7 @@ func _ready() -> void:
 	main.shop.order_placed.connect(_add_pickup_card)
 	main.shop.orders_changed.connect(_sync_pickup_cards)
 	main.shop.order_delivered.connect(_on_delivered)
+	main.shop.couriers_changed.connect(_refresh_staff)
 	main.screen_changed.connect(_on_screen_changed)
 	GameState.xp_changed.connect(_refresh_level)
 	GameState.level_up.connect(_on_level_up)
@@ -151,6 +182,7 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	_avoid_keyboard()
 	_refresh_summary()
+	_place_pos_screen()
 	var on_shop := main.screen == Main.SHOP and not main.transitioning and not main.register_focus
 	var on_kitchen := main.screen == Main.KITCHEN and not main.transitioning
 
@@ -159,6 +191,8 @@ func _process(_delta: float) -> void:
 	for order in main.shop.orders:
 		if _pickup_cards.has(order["number"]):
 			_update_pickup_card(order, _pickup_cards[order["number"]], on_shop)
+	_update_courier_cards(on_shop)
+	_update_phone_badge(on_shop)
 	var waiting := main.shop.waiting_count()
 
 	var cooked := false
@@ -254,6 +288,13 @@ func _build_top_bar() -> void:
 	_xp_bar.add_theme_stylebox_override("fill", UiKit.flat(UiKit.PURPLE, 8, 0))
 	level_box.add_child(_xp_bar)
 
+	var calendar := Button.new()
+	calendar.custom_minimum_size = Vector2(56, 0)
+	UiKit.set_icon(calendar, "calendar-days", 30)
+	UiKit.candy(calendar, UiKit.NEUTRAL, UiKit.TEXT)
+	calendar.pressed.connect(open_calendar)
+	row.add_child(calendar)
+
 	var pause := Button.new()
 	pause.custom_minimum_size = Vector2(56, 0)
 	UiKit.set_icon(pause, "pause", 30)
@@ -321,18 +362,25 @@ func _build_market_panel() -> Control:
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 10)
 	box.add_child(tabs)
-	for i in 3:
+	for i in 4:
 		var tab := Button.new()
-		tab.text = ["Malzeme", "Geliştir", "Personel"][i]
-		UiKit.set_icon(tab, ["package", "circle-arrow-up", "users"][i], 28)
+		tab.text = ["Malzeme", "Menü", "Geliştir", "Personel"][i]
+		UiKit.set_icon(tab, ["package", "utensils", "circle-arrow-up", "users"][i], 24)
 		tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		tab.custom_minimum_size = Vector2(0, 64)
-		tab.add_theme_font_size_override("font_size", 24)
+		tab.add_theme_font_size_override("font_size", 20)
 		tab.pressed.connect(_show_market_tab.bind(i))
 		tabs.add_child(tab)
 		_market_tabs.append(tab)
 
-	_market_pages = [_build_supplies_page(), _build_upgrades_page(), _build_staff_page()]
+	_market_pages = [_build_supplies_page(), _build_menu_page(), _build_upgrades_page(), _build_staff_page()]
+	GameState.market_changed.connect(_refresh_market)
+	GameState.stock_changed.connect(_refresh_market)
+	GameState.day_started.connect(func(_d: int) -> void: _refresh_market())
+	GameState.reviews_changed.connect(_refresh_market)
+	_refresh_market()
+	GameState.level_up.connect(func(_l: int) -> void: _refresh_unlocks())
+	_refresh_unlocks.call_deferred()
 	for page in _market_pages:
 		box.add_child(page)
 	_show_market_tab(0)
@@ -343,7 +391,7 @@ func _build_market_panel() -> Control:
 func _build_staff_page() -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 12)
-	box.add_child(_heading("Personel", "Garson masaları temizler • maaş gün sonunda ödenir"))
+	box.add_child(_heading("Personel", "Garson masaları temizler, kurye paket götürür • maaş gün sonunda"))
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(0, 560)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -361,7 +409,11 @@ func _refresh_staff() -> void:
 	for child in _staff_list.get_children():
 		child.queue_free()
 
-	_staff_list.add_child(_section_label("Çalışanların (%d/%d)" % [GameState.staff.size(), Staff.MAX_STAFF]))
+	var max_total := 0
+	for job in Staff.ROLES:
+		if GameState.level >= int(Staff.ROLES[job]["unlock"]):
+			max_total += int(Staff.ROLES[job]["max"])
+	_staff_list.add_child(_section_label("Çalışanların (%d/%d)" % [GameState.staff.size(), max_total]))
 	if GameState.staff.is_empty():
 		_staff_list.add_child(_muted_label("Henüz çalışanın yok. Masaları kendin temizlemelisin."))
 	for i in GameState.staff.size():
@@ -371,7 +423,16 @@ func _refresh_staff() -> void:
 			GameState.fire(i)
 			show_toast("%s işten çıkarıldı" % person["name"])
 		)
-		_staff_list.add_child(_person_row("chef-hat", person, "₺%d / gün" % person["wage"], [fire]))
+		var wage_text := "₺%d / gün" % person["wage"]
+		if Staff.role(person) == "kurye":
+			for courier in main.shop.couriers:
+				if is_same(courier.data, person):
+					wage_text += " • " + courier.status_text()
+		_staff_list.add_child(_person_row("chef-hat", person, wage_text, [fire]))
+	if GameState.level < int(Staff.ROLES["kurye"]["unlock"]):
+		_staff_list.add_child(_muted_label("Kurye Seviye %d'de açılır: paket servis telefonu çalmaya başlar." % Staff.ROLES["kurye"]["unlock"]))
+	elif Staff.count(GameState.staff, "kurye") == 0:
+		_staff_list.add_child(_muted_label("Kurye alırsan kasadaki telefona paket siparişleri gelir."))
 
 	_staff_list.add_child(_section_label("Bugünün adayları"))
 	if GameState.candidates.is_empty():
@@ -442,7 +503,7 @@ func _person_row(icon: String, person: Dictionary, wage_text: String, buttons: A
 	name_l.add_theme_font_size_override("font_size", 26)
 	info.add_child(name_l)
 	var traits := Label.new()
-	traits.text = Staff.traits(person)
+	traits.text = "%s • %s" % [Staff.role_name(person), Staff.traits(person)]
 	traits.add_theme_color_override("font_color", Color("#8a6cf0"))
 	traits.add_theme_font_size_override("font_size", 20)
 	info.add_child(traits)
@@ -487,6 +548,7 @@ func _muted_label(text: String) -> Label:
 
 ## Gün sonu: ortada gecenin özeti, "Yeni Güne Başla" ile sabah olur.
 func _on_day_ended(stats: Dictionary) -> void:
+	Sfx.play("day_end")
 	var overlay := ColorRect.new()
 	overlay.color = Color(0.03, 0.04, 0.12, 0.6)
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -578,15 +640,17 @@ func _show_market_tab(index: int) -> void:
 			_style_button(_market_tabs[i], Color("#efe6dd"), C_TEXT)
 
 
+## Toptancı borsası: fiyatlar gün içinde değişir (ok ve yüzde), arada fırsat çıkar.
+## Her kartta stok, tarihi geçenler ve en yakın son kullanma günü yazar.
 func _build_supplies_page() -> Control:
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 12)
-	box.add_child(_heading("Toptancı", "Malzeme bitince buradan al"))
+	box.add_theme_constant_override("separation", 10)
+	box.add_child(_heading("Toptancı Borsası", "Fiyatlar 12:00, 15:00, 18:00 ve her sabah değişir"))
 
 	var grid := GridContainer.new()
 	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 12)
-	grid.add_theme_constant_override("v_separation", 12)
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 10)
 	box.add_child(grid)
 	for id in Items.PRODUCTS:
 		var card := PanelContainer.new()
@@ -598,27 +662,185 @@ func _build_supplies_page() -> Control:
 		card.add_child(v)
 
 		var top := HBoxContainer.new()
+		top.add_theme_constant_override("separation", 8)
 		v.add_child(top)
-		top.add_child(UiKit.food_rect(id, 72))
+		top.add_child(UiKit.food_rect(id, 56))
 		var info := VBoxContainer.new()
-		info.add_theme_constant_override("separation", 0)
+		info.add_theme_constant_override("separation", -2)
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		top.add_child(info)
-		var name_l := Label.new()
-		name_l.text = Items.display_name(id)
-		info.add_child(name_l)
-		var stock_l := Label.new()
-		stock_l.add_theme_color_override("font_color", C_MUTED)
-		stock_l.add_theme_font_size_override("font_size", 22)
+		info.add_child(UiKit.label(Items.display_name(id), 21, UiKit.TEXT, 900))
+		var stock_l := UiKit.label("", 17, C_MUTED)
 		info.add_child(stock_l)
-		_market_stock[id] = stock_l
+		var expiry_l := UiKit.label("", 15, C_MUTED)
+		info.add_child(expiry_l)
 
+		# Borsa: güncel paket fiyatı, son değişim ve fırsat etiketi
+		var price_row := HBoxContainer.new()
+		price_row.add_theme_constant_override("separation", 6)
+		v.add_child(price_row)
+		var price_l := UiKit.label("", 26, UiKit.TEXT, 900)
+		price_row.add_child(price_l)
+		var trend_l := UiKit.label("", 17, C_MUTED, 900)
+		trend_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		price_row.add_child(trend_l)
+		var deal := PanelContainer.new()
+		price_row.add_child(deal)
+		var deal_l := UiKit.label("", 13, Color.WHITE, 900)
+		deal.add_child(deal_l)
+
+		var actions := HBoxContainer.new()
+		actions.add_theme_constant_override("separation", 6)
+		v.add_child(actions)
 		var buy := Button.new()
-		buy.text = "+%d   ₺%d" % [Items.PACK_SIZE, Items.PRODUCTS[id]["pack_price"]]
-		UiKit.set_icon(buy, "shopping-cart", 28)
+		buy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		buy.add_theme_font_size_override("font_size", 20)
+		UiKit.set_icon(buy, "shopping-cart", 24)
 		_style_button(buy, C_GREEN, Color.WHITE)
 		buy.pressed.connect(_buy.bind(id))
-		v.add_child(buy)
+		actions.add_child(buy)
+		var toss := Button.new()
+		toss.text = "At"
+		toss.add_theme_font_size_override("font_size", 18)
+		UiKit.set_icon(toss, "trash-2", 22)
+		_style_button(toss, UiKit.RED, Color.WHITE)
+		toss.pressed.connect(func() -> void:
+			var n := GameState.discard_expired(id)
+			if n > 0:
+				Sfx.play("pop")
+				show_toast("%d bozuk %s çöpe atıldı" % [n, Items.display_name(id)])
+		)
+		actions.add_child(toss)
+		_market_stock[id] = stock_l
+		_market_refs[id] = { "card": card, "stock": stock_l, "expiry": expiry_l, "price": price_l, "trend": trend_l, "deal": deal, "deal_label": deal_l, "buy": buy, "toss": toss }
 	return box
+
+
+## Menü fiyatları: her ürünün satış fiyatı ayarlanır. Pahalı olursa müşteri azalır
+## ve puan düşer, ucuz olursa kalabalık olur. İtibar arttıkça müşteri daha yüksek
+## fiyata razı olur.
+func _build_menu_page() -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
+	box.add_child(_heading("Menü Fiyatları", "Pahalıysa müşteri azalır, ucuzsa kalabalık olur"))
+	_tolerance_label = UiKit.label("", 19, UiKit.PURPLE, 900)
+	_tolerance_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(_tolerance_label)
+	for id in Items.PRODUCTS:
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", UiKit.card_style())
+		box.add_child(card)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		card.add_child(row)
+		row.add_child(UiKit.food_rect(id, 52))
+		var info := VBoxContainer.new()
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		info.add_theme_constant_override("separation", 0)
+		row.add_child(info)
+		var name_row := HBoxContainer.new()
+		info.add_child(name_row)
+		var name_l := UiKit.label(Items.display_name(id), 21, UiKit.TEXT, 900)
+		name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_row.add_child(name_l)
+		var interest_l := UiKit.label("", 16, C_MUTED, 900)
+		name_row.add_child(interest_l)
+		var profit_l := UiKit.label("", 16, C_MUTED)
+		info.add_child(profit_l)
+		var bar := ProgressBar.new()
+		bar.max_value = 1.0
+		bar.step = 0.01
+		bar.show_percentage = false
+		bar.custom_minimum_size = Vector2(0, 10)
+		info.add_child(bar)
+		var minus := Button.new()
+		UiKit.set_icon(minus, "minus", 26)
+		minus.custom_minimum_size = Vector2(60, 60)
+		_style_button(minus, Color("#efe6dd"), C_TEXT)
+		minus.pressed.connect(_change_price.bind(id, -0.1))
+		row.add_child(minus)
+		var price_l := UiKit.label("", 28, UiKit.TEXT, 900)
+		price_l.custom_minimum_size = Vector2(76, 0)
+		price_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		row.add_child(price_l)
+		var plus := Button.new()
+		UiKit.set_icon(plus, "plus", 26)
+		plus.custom_minimum_size = Vector2(60, 60)
+		_style_button(plus, Color("#efe6dd"), C_TEXT)
+		plus.pressed.connect(_change_price.bind(id, 0.1))
+		row.add_child(plus)
+		_menu_refs[id] = { "card": card, "price": price_l, "profit": profit_l, "interest": interest_l, "bar": bar }
+	return box
+
+
+## Kilitli ürünler mutfakta, markette ve menüde görünmez; seviye atlayınca açılır.
+func _refresh_unlocks() -> void:
+	_filter_kitchen_cards()
+	for id in _market_refs:
+		(_market_refs[id]["card"] as Control).visible = Items.unlocked(id)
+	for id in _menu_refs:
+		(_menu_refs[id]["card"] as Control).visible = Items.unlocked(id)
+	_refresh_market()
+
+
+func _change_price(id: String, step: float) -> void:
+	GameState.set_price_factor(id, float(GameState.price_factors.get(id, 1.0)) + step)
+	Sfx.play("beep", 0.05)
+
+
+## Borsa ve menü kartlarını günceller.
+func _refresh_market() -> void:
+	for id in _market_refs:
+		var refs: Dictionary = _market_refs[id]
+		var entry: Dictionary = GameState.market[id]
+		var expired := GameState.expired_count(id)
+		var fresh: int = GameState.stock[id] - expired
+		(refs["stock"] as Label).text = "%d taze" % fresh + ("  •  %d bozuk" % expired if expired > 0 else "")
+		(refs["stock"] as Label).add_theme_color_override("font_color", UiKit.RED if expired > 0 else C_MUTED)
+		var next := GameState.next_expiry(id)
+		(refs["expiry"] as Label).text = "" if next < 0 else ("SKT: bugün" if next == GameState.day else "SKT: %d gün" % (next - GameState.day))
+		(refs["price"] as Label).text = "₺%d" % GameState.pack_price(id)
+		var change := Exchange.change_percent(entry)
+		var trend: Label = refs["trend"]
+		trend.text = "▲ %%%d" % change if change > 0 else ("▼ %%%d" % -change if change < 0 else "–")
+		# Alıcı için fiyatın düşmesi iyi (yeşil), artması kötü (kırmızı)
+		trend.add_theme_color_override("font_color", UiKit.RED if change > 0 else (UiKit.GREEN if change < 0 else C_MUTED))
+		var deal: String = entry["deal"]
+		(refs["deal"] as Control).visible = deal != ""
+		if deal != "":
+			var color := UiKit.RED if deal == "zam" else (UiKit.ORANGE if deal == "skt" else UiKit.GREEN)
+			(refs["deal"] as PanelContainer).add_theme_stylebox_override("panel", UiKit.flat(color, 8, 4))
+			(refs["deal_label"] as Label).text = Exchange.DEALS[deal][0]
+		(refs["buy"] as Button).text = "+%d   ₺%d" % [Items.PACK_SIZE, GameState.pack_price(id)]
+		(refs["toss"] as Button).visible = expired > 0
+	var tolerance := Progression.price_tolerance()
+	if _tolerance_label:
+		_tolerance_label.text = "Makul fiyat sınırı: %%%d (puan ve dekorla artar)  •  Müşteri akışı: %%%d" % [
+			roundi(tolerance * 100.0), roundi(100.0 / Progression.price_demand())]
+	for id in _menu_refs:
+		var refs: Dictionary = _menu_refs[id]
+		var price := Items.price(id)
+		var base: int = Items.PRODUCTS[id]["price"]
+		(refs["price"] as Label).text = "₺%d" % price
+		var cost := float(GameState.pack_price(id)) / Items.PACK_SIZE
+		(refs["profit"] as Label).text = "Taban ₺%d  •  Maliyet ₺%.1f  •  Kâr ₺%.1f" % [base, cost, price - cost]
+		var ratio := Progression.price_ratio(id)
+		var interest := "Yüksek ilgi"
+		var color := UiKit.GREEN
+		if ratio > 1.4:
+			interest = "Çok pahalı"
+			color = UiKit.RED
+		elif ratio > 1.15:
+			interest = "Düşük ilgi"
+			color = UiKit.ORANGE
+		elif ratio > 0.9:
+			interest = "Normal"
+			color = UiKit.YELLOW
+		(refs["interest"] as Label).text = interest
+		(refs["interest"] as Label).add_theme_color_override("font_color", color.darkened(0.15))
+		var bar: ProgressBar = refs["bar"]
+		bar.value = clampf(1.6 - ratio, 0.05, 1.0)
+		bar.add_theme_stylebox_override("fill", UiKit.flat(color, 5, 0))
 
 
 func _build_upgrades_page() -> Control:
@@ -707,8 +929,7 @@ func _refresh_level() -> void:
 
 ## Seviye atlayınca ortada büyük bir kutlama ve açılan geliştirmeler.
 func _on_level_up(level: int) -> void:
-	Sfx.play("approve")
-	Sfx.play("kaching")
+	Sfx.play("level_up")
 	var card := PanelContainer.new()
 	var level_style := UiKit.panel_style(32)
 	level_style.bg_color = UiKit.PURPLE
@@ -731,7 +952,10 @@ func _on_level_up(level: int) -> void:
 	v.add_child(title)
 	var sub := Label.new()
 	var unlocks := Progression.unlocks_at(level)
+	var products := Items.unlocking_at(level)
 	sub.text = "Müşteriler artıyor, siparişler büyüyor!"
+	if not products.is_empty():
+		sub.text += "\nYeni ürün açıldı: " + ", ".join(products) + "\n(Marketten malzemesini al)"
 	if not unlocks.is_empty():
 		sub.text += "\nYeni geliştirme: " + ", ".join(unlocks)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -789,7 +1013,25 @@ func _build_kitchen_panel() -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
 	panel.add_child(box)
-	box.add_child(_heading("Pişir", "Kıvamı yeşildeyken ürüne dokun, sonra fişin tepsisine koy"))
+	# Başlık ve kamera açısı: genel / ızgara / fritöz
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
+	box.add_child(head)
+	var title := UiKit.label("Pişir", 30, UiKit.TEXT, 900)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	for view in [["", "layout-grid", "Genel"], ["izgara", "flame", "Izgara"], ["fritoz", "cooking-pot", "Fritöz"], ["firin", "house", "Fırın"]]:
+		var b := Button.new()
+		b.text = view[2]
+		UiKit.set_icon(b, view[1], 22)
+		b.add_theme_font_size_override("font_size", 18)
+		b.custom_minimum_size = Vector2(0, 50)
+		b.pressed.connect(main.kitchen_focus.bind(view[0]))
+		head.add_child(b)
+		_view_buttons[view[0]] = b
+	main.kitchen_view_changed.connect(_refresh_view_buttons)
+	_refresh_view_buttons("")
+	box.add_child(UiKit.label("Kıvamı yeşildeyken ürüne dokun, sonra fişin tepsisine koy", 19, UiKit.MUTED))
 	# Ürün kartları ekrana sığar; ürün çoğalırsa yana kaydırılır.
 	var cards := ScrollContainer.new()
 	cards.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -817,7 +1059,11 @@ func _build_kitchen_panel() -> Control:
 		# Yiyecek ikonu kendi renginde kalsın.
 		for key in ["icon_normal_color", "icon_hover_color", "icon_pressed_color", "icon_focus_color", "icon_hover_pressed_color"]:
 			btn.add_theme_color_override(key, Color.WHITE)
-		btn.pressed.connect(main.kitchen.add_ingredient.bind(id))
+		btn.pressed.connect(func() -> void:
+			main.kitchen.add_ingredient(id)
+			# Ürünün konduğu cihaza yakın plan
+			main.kitchen_focus(Items.PRODUCTS[id]["device"])
+		)
 		row.add_child(btn)
 		_kitchen_buttons[id] = btn
 	var strip := TicketStrip.new()
@@ -975,6 +1221,11 @@ func _apply_safe_area() -> void:
 	_root.offset_right = -maxf(0.0, window.x - safe.end.x) * scale
 
 
+## Güvenli alanın üst boşluğu (çentik); masaüstünde 0.
+func safe_top() -> float:
+	return _root.offset_top
+
+
 ## Klavye açıkken yazılan kutu klavyenin altında kalmasın: tüm arayüz yukarı kayar.
 func _avoid_keyboard() -> void:
 	if not DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
@@ -1088,7 +1339,7 @@ func _add_card(customer: ShopCustomer) -> void:
 	btn.add_theme_font_size_override("font_size", 22)
 	UiKit.set_icon(btn, "receipt", 26)
 	_style_button(btn, C_ORANGE, Color.WHITE)
-	btn.pressed.connect(func() -> void: main.shop.take_order(customer))
+	btn.pressed.connect(func() -> void: main.shop.request_order(customer))
 	box.add_child(btn)
 
 	card.set_meta("bar", bar)
@@ -1100,6 +1351,9 @@ func _add_card(customer: ShopCustomer) -> void:
 
 ## Sipariş veren müşterinin üstünde: numara, bekleme çubuğu, Teslim Et.
 func _add_pickup_card(order: Dictionary) -> void:
+	# Paket servis siparişinin dükkanda bekleyen müşterisi yok.
+	if order.get("delivery", false):
+		return
 	var card := PanelContainer.new()
 	var style := UiKit.panel_style(20)
 	style.set_content_margin_all(10)
@@ -1272,6 +1526,58 @@ func _notification(what: int) -> void:
 		set_paused(true)
 
 
+## Seçili kamera açısının düğmesi turuncu görünür.
+func _refresh_view_buttons(view: String) -> void:
+	for key in _view_buttons:
+		var on: bool = key == view
+		UiKit.candy(_view_buttons[key], UiKit.ORANGE if on else UiKit.NEUTRAL, Color.WHITE if on else UiKit.TEXT)
+	_filter_kitchen_cards()
+
+
+## Mutfak kartları: genel görünümde açık ürünlerin hepsi, cihaz yakın planında
+## sadece o cihazda pişenler.
+func _filter_kitchen_cards() -> void:
+	var view := main.kitchen_view
+	for id in _kitchen_buttons:
+		var device: String = Items.PRODUCTS[id]["device"]
+		(_kitchen_buttons[id] as Control).visible = Items.unlocked(id) and (view == "" or device == view)
+
+
+## Sipariş ve ödeme ekranları kasanın ekranına oturur: kamera 3D ekranı tam bu
+## alanın arkasına getirir (Main.pos_screen_rect). Kasa ekranı açıkken alttaki
+## sipariş paneli gizlenir.
+func _place_pos_screen() -> void:
+	var active := _order_entry.visible or _payment.visible
+	if main.screen == Main.SHOP and GameState.setup_done:
+		_panels[Main.SHOP].visible = not active
+	_pos_backdrop.modulate.a = move_toward(_pos_backdrop.modulate.a, 1.0 if active else 0.0, get_process_delta_time() * 4.0)
+	_pos_backdrop.visible = _pos_backdrop.modulate.a > 0.0
+	if not active:
+		return
+	var rect := main.pos_screen_rect()
+	rect.position -= _root.position
+	if _order_entry.visible:
+		_order_entry.place(rect)
+	if _payment.visible:
+		_payment.place(rect)
+
+
+## Kasa ekranı: kamera kasaya yaklaşır, müşterinin isteği menüden fişe girilir.
+func _open_order_entry(customer: ShopCustomer) -> void:
+	if _order_entry.visible:
+		return
+	main.focus_register(true)
+	_order_entry.open(customer)
+
+
+## Takvim: gün gün kazanç ve gider dökümü.
+func open_calendar() -> void:
+	if _calendar and is_instance_valid(_calendar):
+		return
+	_calendar = CalendarUI.new()
+	_root.add_child(_calendar)
+
+
 func open_settings() -> void:
 	if _settings and is_instance_valid(_settings):
 		return
@@ -1304,6 +1610,7 @@ func _on_tutorial_changed(step: int) -> void:
 
 
 func _on_screen_changed(screen: int) -> void:
+	Sfx.set_screen(screen)
 	# Kurulum sırasında sadece kurulum paneli görünür.
 	_nav_row.visible = GameState.setup_done
 	for i in _panels.size():
@@ -1425,8 +1732,6 @@ class Coin extends Control:
 
 
 func _refresh_stock() -> void:
-	for id in _market_stock:
-		(_market_stock[id] as Label).text = "Stok: %d" % GameState.stock[id]
 	for id in _kitchen_buttons:
 		(_kitchen_buttons[id] as Button).text = "%s\n%d stok · %d hazır" % [Items.display_name(id), GameState.stock[id], GameState.available(id)]
 	for labels in _ready_labels:
@@ -1474,3 +1779,151 @@ func _buy(id: String) -> void:
 		show_toast("+%d %s alındı" % [Items.PACK_SIZE, Items.display_name(id)])
 	else:
 		show_toast("Yeterli paran yok!")
+
+
+# --- Kurye kartları ve telefon rozeti -------------------------------------------------
+
+## Kuryenin başının üstünde, müşteri kartları gibi: adı, kucağındaki paketler
+## (4 yuva), paketlerin bekleme çubuğu, "Paket Ver" ve "Yola Çık".
+func _update_courier_cards(on_shop: bool) -> void:
+	var shop := main.shop
+	for courier in _courier_cards.keys():
+		if not is_instance_valid(courier) or not shop.couriers.has(courier):
+			(_courier_cards[courier] as Control).queue_free()
+			_courier_cards.erase(courier)
+	for courier in shop.couriers:
+		if not _courier_cards.has(courier):
+			_courier_cards[courier] = _make_courier_card(courier)
+		var card: PanelContainer = _courier_cards[courier]
+		var here := courier.state == Courier.State.WAITING
+		card.visible = on_shop and here
+		if not card.visible:
+			continue
+		var p := main.camera.unproject_position(courier.global_position + Vector3(0, courier.card_height, 0))
+		# Kenara yakın kuryenin kartı ekrandan taşmasın.
+		var width := _world_ui.size.x
+		card.position = Vector2(clampf(p.x - card.size.x * 0.5, 12.0, width - card.size.x - 12.0), p.y - card.size.y)
+		var count := courier.packages.size()
+		var slots: Array = card.get_meta("slots")
+		for i in slots.size():
+			var full: bool = i < count
+			var slot: PanelContainer = slots[i]
+			slot.add_theme_stylebox_override("panel", UiKit.flat(UiKit.PURPLE if full else Color("#ece6f7"), 8, 2))
+			(slot.get_child(0) as TextureRect).modulate = Color.WHITE if full else Color(1, 1, 1, 0.0)
+		# Bekleme çubuğu: kucaktaki en sabırsız müşteri
+		var bar: ProgressBar = card.get_meta("bar")
+		bar.visible = count > 0
+		if count > 0:
+			var ratio := 1.0
+			for order in courier.packages:
+				ratio = minf(ratio, Shop.patience_ratio(order))
+			bar.value = ratio
+			bar.add_theme_stylebox_override("fill", _bar_styles[0 if ratio < 0.25 else (1 if ratio < 0.55 else 2)])
+		var ready := 0
+		for order in shop.orders:
+			if order.get("delivery", false) and order["ready"]:
+				ready += 1
+		var give: Button = card.get_meta("give")
+		var go: Button = card.get_meta("go")
+		var give_state := "%d|%d" % [ready, count]
+		if card.get_meta("state") != give_state:
+			card.set_meta("state", give_state)
+			give.visible = ready > 0 and not courier.is_full()
+			give.text = "Paket Ver" if ready <= 1 else "Paket Ver (%d)" % ready
+			go.visible = count > 0
+			go.text = "Yola Çık"
+			(card.get_meta("hint") as Label).visible = ready == 0 and count == 0
+			(card.get_meta("hint") as Label).text = "Paket bekliyor"
+			# Gizlenen düğmelerin yeri kalmasın: kart içeriğe göre küçülür.
+			card.reset_size()
+
+
+func _make_courier_card(courier: Courier) -> PanelContainer:
+	var card := PanelContainer.new()
+	var style := UiKit.panel_style(20)
+	style.set_content_margin_all(10)
+	style.border_color = UiKit.PURPLE
+	style.border_width_bottom = 4
+	card.add_theme_stylebox_override("panel", style)
+	card.custom_minimum_size = Vector2(176, 0)
+	card.visible = false
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	card.add_child(box)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 6)
+	box.add_child(head)
+	head.add_child(UiKit.icon_rect("package", UiKit.PURPLE, 26))
+	var name_l := UiKit.label(courier.data["name"], 22, C_TEXT, 900)
+	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(name_l)
+	head.add_child(UiKit.label("KURYE", 14, UiKit.PURPLE, 900))
+	# Kucaktaki paketler: 4 yuva
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 5)
+	box.add_child(row)
+	var slots: Array = []
+	for i in Staff.COURIER_CAPACITY:
+		var slot := PanelContainer.new()
+		slot.custom_minimum_size = Vector2(34, 34)
+		slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var icon := UiKit.icon_rect("package", Color.WHITE, 22)
+		icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		slot.add_child(icon)
+		row.add_child(slot)
+		slots.append(slot)
+	var bar := ProgressBar.new()
+	bar.max_value = 1.0
+	bar.step = 0.001
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, 10)
+	box.add_child(bar)
+	var hint := UiKit.label("", 17, C_MUTED, 700)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(hint)
+	var give := Button.new()
+	give.add_theme_font_size_override("font_size", 18)
+	give.custom_minimum_size = Vector2(0, 50)
+	UiKit.set_icon(give, "hand-platter", 22)
+	UiKit.candy(give, UiKit.PURPLE, Color.WHITE)
+	give.pressed.connect(func() -> void:
+		for order in main.shop.orders:
+			if order.get("delivery", false) and order["ready"]:
+				main.shop.give_to_courier(order)
+				return
+	)
+	box.add_child(give)
+	var go := Button.new()
+	go.add_theme_font_size_override("font_size", 18)
+	go.custom_minimum_size = Vector2(0, 50)
+	UiKit.set_icon(go, "arrow-right", 22)
+	UiKit.candy(go, C_GREEN, Color.WHITE)
+	go.pressed.connect(func() -> void: main.shop.dispatch(courier))
+	box.add_child(go)
+	card.set_meta("slots", slots)
+	card.set_meta("bar", bar)
+	card.set_meta("give", give)
+	card.set_meta("go", go)
+	card.set_meta("hint", hint)
+	card.set_meta("state", "")
+	_world_ui.add_child(card)
+	return card
+
+
+## Telefon çalarken üstünde zıplayan "PAKET!" rozeti; dokununca çağrı açılır.
+func _update_phone_badge(on_shop: bool) -> void:
+	var reg := main.shop.register
+	if _phone_badge == null:
+		_phone_badge = Button.new()
+		_phone_badge.text = "PAKET!"
+		_phone_badge.add_theme_font_size_override("font_size", 20)
+		_phone_badge.custom_minimum_size = Vector2(0, 46)
+		UiKit.set_icon(_phone_badge, "smartphone", 22)
+		UiKit.candy(_phone_badge, UiKit.PURPLE, Color.WHITE)
+		_phone_badge.pressed.connect(main.shop.answer_call)
+		_world_ui.add_child(_phone_badge)
+	_phone_badge.visible = on_shop and reg.is_ringing()
+	if _phone_badge.visible:
+		var p := main.camera.unproject_position(reg.phone_top())
+		var bob := 6.0 * sin(Time.get_ticks_msec() * 0.008)
+		_phone_badge.position = p - Vector2(_phone_badge.size.x * 0.5, _phone_badge.size.y + bob)

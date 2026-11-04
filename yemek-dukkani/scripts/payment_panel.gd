@@ -41,51 +41,28 @@ var _give_btn: Button
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	visible = false
-
-	var dim := ColorRect.new()
-	dim.color = Color(0.1, 0.06, 0.04, 0.45)
-	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(dim)
-
-	_sheet = PanelContainer.new()
-	_sheet.add_theme_stylebox_override("panel", Util.style(Color("#fffaf3"), 30, 22, true))
-	_sheet.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	_sheet.offset_left = 16
-	_sheet.offset_right = -16
-	_sheet.offset_top = -16
-	_sheet.offset_bottom = -16
-	_sheet.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	add_child(_sheet)
-
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 14)
-	_sheet.add_child(box)
-
-	var header := HBoxContainer.new()
-	box.add_child(header)
-	var head_text := VBoxContainer.new()
-	head_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	head_text.add_theme_constant_override("separation", 0)
-	header.add_child(head_text)
-	var kasa := Label.new()
-	kasa.text = "KASA"
-	kasa.add_theme_font_override("font", UiKit.font(900))
-	kasa.add_theme_color_override("font_color", C_MUTED)
-	kasa.add_theme_font_size_override("font_size", 20)
-	head_text.add_child(kasa)
-	_title = Label.new()
-	_title.add_theme_font_size_override("font_size", 30)
-	head_text.add_child(_title)
-	_amount = Label.new()
-	_amount.add_theme_font_size_override("font_size", 56)
-	_amount.add_theme_font_override("font", UiKit.font(900))
-	_amount.add_theme_color_override("font_color", C_TEXT)
+	# Ödeme de kasanın ekranında yapılır (sipariş ekranıyla aynı görünüm).
+	_sheet = OrderEntry.pos_frame(self)
+	var box: VBoxContainer = _sheet.get_meta("box")
+	var header := OrderEntry.pos_header(box)
+	_title = UiKit.label("", 24, Color.WHITE, 900)
+	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(_title)
+	_amount = UiKit.label("", 34, Color.WHITE, 900)
 	header.add_child(_amount)
-
 	_content = VBoxContainer.new()
-	_content.add_theme_constant_override("separation", 12)
+	_content.add_theme_constant_override("separation", 10)
+	_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(_content)
+
+
+## Arayüzü kasa ekranının telefondaki dikdörtgenine oturtur.
+func place(rect: Rect2) -> void:
+	_sheet.position = rect.position
+	_sheet.scale = rect.size / OrderEntry.DESIGN
+	_sheet.size = OrderEntry.DESIGN
 
 
 func open(c: ShopCustomer, amount: int) -> void:
@@ -99,22 +76,18 @@ func open(c: ShopCustomer, amount: int) -> void:
 
 	by_card = randf() < 0.5
 	if by_card:
-		_title.text = "%s kartla ödüyor" % c.customer_name
+		_title.text = "Ödeme • %s • Kart" % c.customer_name
 		_build_card()
 		Sfx.play("pop")
 	else:
 		paid = _customer_cash(total)
-		_title.text = "%s nakit ödüyor" % c.customer_name
+		_title.text = "Ödeme • %s • Nakit" % c.customer_name
 		_build_cash()
 		Sfx.play("drawer")
 
 	visible = true
 	modulate.a = 0.0
-	_sheet.pivot_offset = Vector2(360, 600)
-	_sheet.scale = Vector2(0.92, 0.92)
-	var tween := create_tween().set_parallel(true)
-	tween.tween_property(self, "modulate:a", 1.0, 0.18)
-	tween.tween_property(_sheet, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	create_tween().tween_property(self, "modulate:a", 1.0, 0.2)
 
 
 ## Test ve kolaylık için: ödemeyi doğru şekilde kendiliğinden tamamlar.
@@ -135,43 +108,34 @@ func auto_complete() -> void:
 # --- Kartla ödeme --------------------------------------------------------------
 
 func _build_card() -> void:
-	var terminal := PanelContainer.new()
-	terminal.add_theme_stylebox_override("panel", Util.style(Color("#2b2f36"), 26, 22))
-	_content.add_child(terminal)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 14)
-	terminal.add_child(v)
-
 	var screen_box := PanelContainer.new()
-	screen_box.add_theme_stylebox_override("panel", Util.style(Color("#a8dcb8"), 14, 18))
-	v.add_child(screen_box)
+	screen_box.add_theme_stylebox_override("panel", Util.style(Color("#d8f0e0"), 14, 14))
+	_content.add_child(screen_box)
 	_screen = Label.new()
-	_screen.text = "₺%d\nKartınızı okutun" % total
+	_screen.text = "₺%d
+Kartınızı POS cihazına okutun" % total
 	_screen.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_screen.add_theme_color_override("font_color", Color("#1d4d2e"))
-	_screen.add_theme_font_size_override("font_size", 32)
+	_screen.add_theme_font_size_override("font_size", 28)
 	screen_box.add_child(_screen)
 
 	# Kartın kayacağı okuyucu yuvası
 	var reader := Control.new()
-	reader.custom_minimum_size = Vector2(0, 90)
-	v.add_child(reader)
+	reader.custom_minimum_size = Vector2(0, 92)
+	_content.add_child(reader)
 	var slot := ColorRect.new()
 	slot.color = Color("#14171b")
-	slot.position = Vector2(150, 70)
-	slot.size = Vector2(340, 10)
+	slot.position = Vector2(110, 72)
+	slot.size = Vector2(300, 10)
 	reader.add_child(slot)
 	_card_icon = UiKit.badge_rect("credit-card", UiKit.BLUE, 72)
-	_card_icon.position = Vector2(540, 0)
+	_card_icon.position = Vector2(500, 4)
 	_card_icon.size = Vector2(72, 72)
 	reader.add_child(_card_icon)
 
-	_card_btn = Button.new()
-	_card_btn.text = "Kartı Okut"
-	UiKit.set_icon(_card_btn, "credit-card", 38)
-	_card_btn.custom_minimum_size = Vector2(0, 96)
-	_card_btn.add_theme_font_size_override("font_size", 34)
-	_style(_card_btn, C_GREEN, Color.WHITE)
+	_card_btn = OrderEntry.pos_button("Kartı Okut", C_GREEN, Color.WHITE, 30)
+	UiKit.set_icon(_card_btn, "credit-card", 34)
+	_card_btn.custom_minimum_size = Vector2(0, 90)
 	_card_btn.pressed.connect(_swipe_card)
 	_content.add_child(_card_btn)
 
@@ -182,9 +146,9 @@ func _swipe_card() -> void:
 	_busy = true
 	_card_btn.disabled = true
 	_screen.text = "İşleniyor..."
-	Sfx.play("beep")
+	Sfx.play("swipe")
 	var tween := create_tween()
-	tween.tween_property(_card_icon, "position:x", 150.0, 0.35).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(_card_icon, "position:x", 110.0, 0.35).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	tween.tween_interval(0.45)
 	tween.tween_callback(func() -> void:
 		_screen.text = "ONAYLANDI\n₺%d" % total
@@ -210,85 +174,66 @@ func _customer_cash(amount: int) -> int:
 func _build_cash() -> void:
 	var change := paid - total
 	var info := HBoxContainer.new()
-	info.add_theme_constant_override("separation", 16)
+	info.add_theme_constant_override("separation", 12)
 	_content.add_child(info)
-	var given_by := Label.new()
-	given_by.text = "Müşteri verdi:"
-	given_by.add_theme_color_override("font_color", C_MUTED)
-	info.add_child(given_by)
-	info.add_child(_note_chip(paid, 1.3))
+	info.add_child(UiKit.label("Müşteri verdi:", 20, C_MUTED))
+	info.add_child(_note_chip(paid, 1.0))
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.add_child(spacer)
 
 	if change == 0:
-		var exact := Label.new()
-		exact.text = "Tam para verdi"
-		exact.add_theme_font_size_override("font_size", 30)
-		_content.add_child(exact)
-		var ok := Button.new()
-		ok.text = "Kasaya Koy"
+		info.add_child(UiKit.label("Tam para", 26, C_GREEN, 900))
+		var ok := OrderEntry.pos_button("Kasaya Koy", C_GREEN, Color.WHITE, 28)
 		ok.custom_minimum_size = Vector2(0, 90)
-		_style(ok, C_GREEN, Color.WHITE)
 		ok.pressed.connect(_finish.bind(0))
 		_content.add_child(ok)
 		return
-
-	var change_l := Label.new()
-	change_l.text = "Paraüstü: ₺%d" % change
-	change_l.add_theme_font_size_override("font_size", 40)
-	change_l.add_theme_color_override("font_color", C_ORANGE)
-	_content.add_child(change_l)
+	info.add_child(UiKit.label("Paraüstü ₺%d" % change, 28, C_ORANGE, 900))
 
 	# Verilen paraüstü tepsisi: dokunulan banknot geri alınır.
 	var tray_box := PanelContainer.new()
-	tray_box.add_theme_stylebox_override("panel", Util.style(Color("#f3e9dc"), 18, 12))
-	tray_box.custom_minimum_size = Vector2(0, 88)
+	tray_box.add_theme_stylebox_override("panel", UiKit.flat(Color("#e6ecf4"), 12, 6))
+	tray_box.custom_minimum_size = Vector2(0, 66)
 	_content.add_child(tray_box)
-	var tray_v := VBoxContainer.new()
-	tray_box.add_child(tray_v)
+	var tray_row := HBoxContainer.new()
+	tray_row.add_theme_constant_override("separation", 8)
+	tray_box.add_child(tray_row)
 	_given_label = Label.new()
-	_given_label.add_theme_font_size_override("font_size", 22)
-	tray_v.add_child(_given_label)
+	_given_label.add_theme_font_size_override("font_size", 19)
+	_given_label.custom_minimum_size = Vector2(150, 0)
+	tray_row.add_child(_given_label)
 	_tray = HFlowContainer.new()
-	_tray.add_theme_constant_override("h_separation", 6)
-	_tray.add_theme_constant_override("v_separation", 6)
-	tray_v.add_child(_tray)
+	_tray.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tray.add_theme_constant_override("h_separation", 4)
+	_tray.add_theme_constant_override("v_separation", 4)
+	tray_row.add_child(_tray)
 
-	# Açık kasa çekmecesi
-	var drawer := PanelContainer.new()
-	drawer.add_theme_stylebox_override("panel", Util.style(Color("#3a3f47"), 20, 14))
-	_content.add_child(drawer)
-	var grid := GridContainer.new()
-	grid.columns = 4
-	grid.add_theme_constant_override("h_separation", 10)
-	grid.add_theme_constant_override("v_separation", 10)
-	drawer.add_child(grid)
+	# Açık kasa çekmecesi: banknotlar ve bozuk para tek sırada
+	var grid := HBoxContainer.new()
+	grid.add_theme_constant_override("separation", 6)
+	_content.add_child(grid)
 	for note in NOTES:
-		var btn := Button.new()
-		btn.text = "₺%d" % note
-		btn.custom_minimum_size = Vector2(0, 78)
+		var btn := OrderEntry.pos_button("₺%d" % note, NOTE_COLORS[note], Color.WHITE, 21)
+		btn.custom_minimum_size = Vector2(0, 74)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.add_theme_font_size_override("font_size", 28)
-		_style(btn, NOTE_COLORS[note], Color.WHITE, 40 if note == 1 else 10)
 		btn.pressed.connect(_add_note.bind(note))
 		grid.add_child(btn)
 
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", 10)
 	_content.add_child(row)
-	var reset := Button.new()
-	reset.text = "Sıfırla"
-	UiKit.set_icon(reset, "x", 26)
-	reset.custom_minimum_size = Vector2(180, 88)
-	_style(reset, Color("#d9d0c9"), C_TEXT)
+	var reset := OrderEntry.pos_button("Sıfırla", Color("#d7dde6"), C_TEXT, 22)
+	reset.custom_minimum_size = Vector2(170, 70)
 	reset.pressed.connect(func() -> void:
 		_given.clear()
 		_refresh_tray()
 	)
 	row.add_child(reset)
-	_give_btn = Button.new()
-	_give_btn.text = "Paraüstünü Ver"
-	UiKit.set_icon(_give_btn, "banknote", 32)
+	_give_btn = OrderEntry.pos_button("Paraüstünü Ver", C_GREEN, Color.WHITE, 26)
+	UiKit.set_icon(_give_btn, "banknote", 28)
 	_give_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_style(_give_btn, C_GREEN, Color.WHITE)
+	_give_btn.custom_minimum_size = Vector2(0, 70)
 	_give_btn.pressed.connect(_give)
 	row.add_child(_give_btn)
 	_refresh_tray()
@@ -311,11 +256,11 @@ func _refresh_tray() -> void:
 	var sum := 0
 	for i in _given.size():
 		sum += _given[i]
-		var chip := _note_chip(_given[i], 0.8)
+		var chip := _note_chip(_given[i], 0.7)
 		chip.gui_input.connect(_on_chip_input.bind(i))
 		_tray.add_child(chip)
 	var change := paid - total
-	_given_label.text = "Verilen: ₺%d / ₺%d" % [sum, change]
+	_given_label.text = "Verilen ₺%d / ₺%d" % [sum, change]
 	_given_label.add_theme_color_override("font_color", C_GREEN if sum == change else (C_RED if sum > change else C_TEXT))
 	_give_btn.disabled = sum < change
 

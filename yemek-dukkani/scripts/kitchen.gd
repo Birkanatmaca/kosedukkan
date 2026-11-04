@@ -4,17 +4,27 @@ extends Node3D
 ## Mutfak ekranı: ızgara ve fritöz. Malzeme alttaki butonlardan seçilir,
 ## pişen ürüne dokununca alınır ve servis rafına (pass) konur. Rafın solunda açık
 ## siparişlerin tepsileri durur; "Tepsiye Koy" denince ürünler raftaki tabaklardan
-## tepsiye uçar. Izgaranın altındaki kömürler kızgın kızgın parlar.
+## tepsiye uçar. Izgaranın altındaki kömürler kızgın kızgın parlar. Sağda taş
+## fırın var: lahmacun, pizza ve pide kürekle fırına sürülür, pişince kürekle çıkarılır.
 
 signal slot_added(slot: CookSlot)
+## Tepsiye ürün kondu (kamera genel açıya döner, uçuş görünsün)
+signal tray_filled
 
 const GRILL_X := -0.9
 const FRYER_X := 0.9
-## Pişirme yerleri: önce ön sıra, geliştirmeyle arka sıra açılır.
+## Pişirme yerleri: önce ön sıra, geliştirmelerle orta ve arka sıra açılır (en fazla 9).
 const GRILL_SLOTS := [
-	Vector2(-0.55, 0.18), Vector2(0.0, 0.18), Vector2(0.55, 0.18),
-	Vector2(0.0, -0.27), Vector2(-0.55, -0.27), Vector2(0.55, -0.27),
+	Vector2(-0.55, 0.28), Vector2(0.0, 0.28), Vector2(0.55, 0.28),
+	Vector2(0.0, 0.0), Vector2(-0.55, 0.0), Vector2(0.55, 0.0),
+	Vector2(0.0, -0.28), Vector2(-0.55, -0.28), Vector2(0.55, -0.28),
 ]
+## Taş fırın: tezgâhın sağında, kendi tabanında. Pişirme yerleri kubbenin içinde.
+const OVEN_X := 3.25
+const OVEN_FLOOR := 0.98
+const OVEN_SLOTS := [Vector2(-0.2, -0.02), Vector2(0.2, -0.02), Vector2(-0.2, -0.32), Vector2(0.2, -0.32)]
+## Kürek fırının ağzında bekler; ürünü içeri sürer ya da dışarı çeker.
+const PEEL_REST_Z := 0.95
 const FRYER_SLOTS := [Vector2(-0.24, 0.17), Vector2(0.24, 0.17), Vector2(-0.24, -0.2), Vector2(0.24, -0.2)]
 ## Her hız kademesinde pişme süresi bu oranla çarpılır.
 const SPEED_STEP := 0.85
@@ -23,12 +33,17 @@ const PASS_Y := 1.55
 const PASS_Z := -0.68
 ## (Kamera rafın x -1.9..1.7 arasını görür; hepsi bu aralığa sığar.)
 const TRAY_X := [-1.65, -1.18, -0.71, -0.24]
-const PLATE_X := { "tavuk": 0.25, "tavuk_sis": 0.67, "kofte": 1.09, "patates": 1.51 }
+## Pişen ürün tabakları rafın sağ yarısına (bu aralığa) eşit aralıkla dizilir.
+const PLATES_FROM := 0.22
+const PLATES_TO := 1.72
 ## Pişirilmeyen ürünler (kola) tepsiye rafın sağ ucundan gelir.
 const COLD_X := 1.75
 ## Tepsideki ürün yerleri (tepsinin ortasına göre)
 const TRAY_SLOTS := [Vector3(-0.1, 0, -0.06), Vector3(0.1, 0, -0.06), Vector3(-0.1, 0, 0.07), Vector3(0.1, 0, 0.07), Vector3(0, 0.05, 0)]
 const ON_TRAY_SCALE := 0.55
+## Tepsi yerlerinin tercih sırası: yemek önce ön sıraya, içecek arka sıraya
+const TRAY_FOOD_ORDER := [2, 3, 0, 1, 4]
+const TRAY_DRINK_ORDER := [0, 1, 4, 2, 3]
 const ON_PLATE_SCALE := 0.62
 
 var slots: Array[CookSlot] = []
@@ -41,6 +56,12 @@ var _tray_counts := {}
 var _coals: StandardMaterial3D
 var _embers: Array[MeshInstance3D] = []
 var _grill_light: OmniLight3D
+var _oven_light: OmniLight3D
+var _flames: Array[MeshInstance3D] = []
+var _peel: Node3D
+var _peel_tray: Node3D
+var _peel_tween: Tween
+var _peel_pending := Callable()
 var _t := 0.0
 
 
@@ -48,6 +69,7 @@ func _ready() -> void:
 	_build_room()
 	_build_grill()
 	_build_fryer()
+	_build_oven()
 	_build_pass()
 	_sync_upgrades()
 	GameState.prepared_changed.connect(_refresh_pass)
@@ -60,12 +82,29 @@ func _ready() -> void:
 ## Kömürler nefes alır gibi parlar, közler tek tek yanıp söner, ışık titrer.
 func _process(delta: float) -> void:
 	_t += delta
+	# Dolu yer arttıkça ızgara daha çok cızırdar, fritöz daha çok fokurdar.
+	var grill := 0
+	var fryer := 0
+	for slot in slots:
+		if not slot.is_empty():
+			if slot.device == "izgara":
+				grill += 1
+			elif slot.device == "fritoz":
+				fryer += 1
+	Sfx.set_loop_level("sizzle", 0.0 if grill == 0 else 0.45 + 0.55 * minf(1.0, grill / 4.0))
+	Sfx.set_loop_level("fryer", 0.0 if fryer == 0 else 0.5 + 0.5 * minf(1.0, fryer / 3.0))
 	var pulse := 0.5 + 0.5 * sin(_t * 2.3) * sin(_t * 0.7 + 1.0)
 	_coals.emission_energy_multiplier = 1.4 + 0.6 * pulse
 	_grill_light.light_energy = 0.9 + 0.35 * pulse + randf_range(-0.05, 0.05)
 	for i in _embers.size():
 		var mat := _embers[i].material_override as StandardMaterial3D
 		mat.emission_energy_multiplier = 1.5 + 2.5 * maxf(0.0, sin(_t * (1.3 + i * 0.37) + i * 2.1))
+	# Fırın ateşi: alevler titreyip boy atar, ışık oynar.
+	_oven_light.light_energy = 1.3 + 0.4 * sin(_t * 7.1) * sin(_t * 2.3) + randf_range(-0.08, 0.08)
+	for i in _flames.size():
+		var flame := _flames[i]
+		flame.scale.y = 1.7 + 0.45 * sin(_t * (6.0 + i * 1.7) + i)
+		flame.scale.x = 0.9 + 0.12 * sin(_t * (5.0 + i) + i * 2.0)
 
 
 ## Yer sayısını ve pişirme hızını geliştirmelere göre ayarlar.
@@ -75,6 +114,10 @@ func _sync_upgrades() -> void:
 	while _count("izgara") < mini(grill_count, GRILL_SLOTS.size()):
 		var p: Vector2 = GRILL_SLOTS[_count("izgara")]
 		_add_slot("izgara", Vector3(GRILL_X + p.x, 1.09, p.y))
+	var oven_count := Progression.BASE_OVEN_SLOTS + GameState.upgrade_level("oven_slot")
+	while _count("firin") < mini(oven_count, OVEN_SLOTS.size()):
+		var p: Vector2 = OVEN_SLOTS[_count("firin")]
+		_add_slot("firin", Vector3(OVEN_X + p.x, OVEN_FLOOR + 0.01, p.y))
 	while _count("fritoz") < mini(fryer_count, FRYER_SLOTS.size()):
 		var p: Vector2 = FRYER_SLOTS[_count("fritoz")]
 		var pos := Vector3(FRYER_X + p.x, 1.18, p.y)
@@ -82,8 +125,8 @@ func _sync_upgrades() -> void:
 		add_child(Util.box(Vector3(0.05, 0.05, 0.22), Color("#2d2f33"), pos + Vector3(0, 0.02, signf(p.y) * 0.27)))
 		_add_slot("fritoz", pos)
 	for slot in slots:
-		var upgrade := "grill_speed" if slot.device == "izgara" else "fryer_speed"
-		slot.speed = pow(SPEED_STEP, GameState.upgrade_level(upgrade))
+		var upgrade: String = { "izgara": "grill_speed", "fritoz": "fryer_speed" }.get(slot.device, "")
+		slot.speed = pow(SPEED_STEP, GameState.upgrade_level(upgrade)) if upgrade != "" else 1.0
 
 
 func _count(device: String) -> int:
@@ -98,10 +141,15 @@ func add_ingredient(id: String) -> void:
 	var device: String = Items.PRODUCTS[id]["device"]
 	for slot in slots:
 		if slot.device == device and slot.is_empty():
-			if not GameState.take_stock(id):
+			var item := GameState.take_stock_item(id)
+			if item < 0:
 				GameState.show_toast("%s bitti! Marketten al." % Items.display_name(id))
 				return
-			slot.start(id)
+			if item == 1:
+				GameState.show_toast("Dikkat: %s malzemesinin tarihi geçmiş!" % Items.display_name(id))
+			slot.start(id, item == 1)
+			if device == "firin":
+				_peel_in(slot, id)
 			return
 	GameState.show_toast("Izgara dolu!" if device == "izgara" else "Fritöz dolu!")
 
@@ -115,7 +163,12 @@ func _on_slot_tapped(slot: CookSlot) -> void:
 		return
 	var id := slot.product
 	var quality := Items.quality_for(slot.doneness())
+	if slot.spoiled and quality > 0:
+		quality = 1
+	if slot.device == "firin":
+		_peel_out(slot, id, quality)
 	slot.clear()
+	Sfx.play("error" if quality == 0 else "collect", 0.08)
 	match quality:
 		0: GameState.show_toast("Yandı! Çöpe gitti")
 		2: GameState.show_toast("Az pişmiş... müşteri fark edebilir")
@@ -272,10 +325,10 @@ func _refresh_pass() -> void:
 		child.queue_free()
 	for id in GameState.prepared:
 		var qualities: Array = GameState.prepared[id]
-		if qualities.is_empty() or not PLATE_X.has(id):
+		if qualities.is_empty() or Items.PRODUCTS[id]["device"] == "":
 			continue
 		var plate := Node3D.new()
-		plate.position.x = PLATE_X[id]
+		plate.position.x = _plate_x(id)
 		_pass_root.add_child(plate)
 		plate.add_child(Util.cylinder(0.18, 0.02, Color("#ffffff"), Vector3(0, 0.01, 0)))
 		for i in mini(qualities.size(), 3):
@@ -298,46 +351,60 @@ func _sync_trays() -> void:
 	for child in _trays_root.get_children():
 		child.queue_free()
 	var counts := {}
+	var filled := false
 	for i in mini(shop.orders.size(), TRAY_X.size()):
 		var order: Dictionary = shop.orders[i]
 		var tray := Node3D.new()
 		tray.position.x = TRAY_X[i]
 		_trays_root.add_child(tray)
 		tray.add_child(Util.model("equipment/tepsi", Vector3.ZERO, 90.0, 1.05))
-		var tag := Util.label3d("#%d" % order["number"], 70, Color.WHITE, Vector3(0, 0.34, 0.05))
+		# Numara tepsinin önünde durur: arkadaki uzun bardakları örtmez.
+		var tag := Util.label3d("#%d%s" % [order["number"], "  HAZIR" if order["ready"] else ""], 56, Color.WHITE, Vector3(0, 0.04, 0.26))
 		tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		tag.outline_size = 18
+		tag.font = UiKit.font(900)
+		tag.outline_size = 16
 		tag.outline_modulate = UiKit.GREEN if order["ready"] else Color("#e8553e")
-		tag.pixel_size = 0.0032
+		tag.pixel_size = 0.0028
+		tag.no_depth_test = true
 		tray.add_child(tag)
-		if order["ready"]:
-			var done := Util.label3d("HAZIR", 40, UiKit.GREEN, Vector3(0, 0.22, 0.05))
-			done.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			done.outline_size = 12
-			done.outline_modulate = Color.WHITE
-			done.pixel_size = 0.0032
-			tray.add_child(done)
 		var placed := 0
 		var before: int = _tray_counts.get(order["number"], 0)
+		# Yemekler ön sıradan, içecekler arka sıradan dizilir (uzun bardak yemeği örtmesin).
+		var entries: Array[Array] = []
 		for id in order["filled"]:
 			for quality in order["filled"][id]:
-				if placed >= TRAY_SLOTS.size():
+				entries.append([id, quality])
+		var free: Array = range(TRAY_SLOTS.size())
+		for entry in entries:
+			var id: String = entry[0]
+			var quality: int = entry[1]
+			if free.is_empty():
+				break
+			var drink: bool = Items.PRODUCTS[id]["device"] == ""
+			var pick: int = free[0]
+			for preferred in (TRAY_DRINK_ORDER if drink else TRAY_FOOD_ORDER):
+				if free.has(preferred):
+					pick = preferred
 					break
-				var item := Items.model(id, Util.material(Items.quality_color(id, quality)))
-				item.scale = Vector3.ONE * ON_TRAY_SCALE
-				var target: Vector3 = TRAY_SLOTS[placed] + Vector3(0, 0.035, 0)
-				tray.add_child(item)
-				if placed >= before:
-					_fly_to_tray(item, id, tray, target, (placed - before) * 0.12)
-				else:
-					item.position = target
-				placed += 1
+			free.erase(pick)
+			var item := Items.model(id, Util.material(Items.quality_color(id, quality)))
+			item.scale = Vector3.ONE * ON_TRAY_SCALE
+			var target: Vector3 = TRAY_SLOTS[pick] + Vector3(0, 0.035, 0)
+			tray.add_child(item)
+			if placed >= before:
+				_fly_to_tray(item, id, tray, target, (placed - before) * 0.12)
+				filled = true
+			else:
+				item.position = target
+			placed += 1
 		counts[order["number"]] = placed
 	_tray_counts = counts
+	if filled:
+		tray_filled.emit()
 
 
 func _fly_to_tray(item: Node3D, id: String, tray: Node3D, target: Vector3, delay: float) -> void:
-	var start := Vector3(float(PLATE_X.get(id, COLD_X)) - tray.position.x, 0.05, 0)
+	var start := Vector3(_plate_x(id) - tray.position.x, 0.05, 0)
 	item.position = start
 	var tween := item.create_tween()
 	tween.tween_interval(delay)
@@ -345,4 +412,148 @@ func _fly_to_tray(item: Node3D, id: String, tray: Node3D, target: Vector3, delay
 		item.position = start.lerp(target, t) + Vector3(0, sin(t * PI) * 0.35, 0)
 		item.rotation_degrees.y = t * 360.0
 	, 0.0, 1.0, 0.45).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	tween.tween_callback(Sfx.play.bind("pop", 0.1))
+	tween.tween_callback(Sfx.play.bind("clink", 0.12))
+
+
+
+## Pişen ürünün raftaki tabağının yeri: açık pişirilen ürünler sırayla dizilir.
+## Pişirilmeyen ürünler (içecekler) rafın sağ ucundan gelir.
+func _plate_x(id: String) -> float:
+	var cooked: Array[String] = []
+	for key in Items.unlocked_ids():
+		if Items.PRODUCTS[key]["device"] != "":
+			cooked.append(key)
+	var index := cooked.find(id)
+	if index < 0:
+		return COLD_X
+	if cooked.size() == 1:
+		return (PLATES_FROM + PLATES_TO) * 0.5
+	return lerpf(PLATES_FROM, PLATES_TO, float(index) / (cooked.size() - 1))
+
+
+## Taş fırın: taş taban, önü açık tuğla kubbe (içi görünür), kemerli ağız, baca,
+## arkada odun ateşi ve kubbenin içine vuran turuncu ışık. Yanında kürek.
+func _build_oven() -> void:
+	var stone := Color("#8f8276")
+	add_child(Util.box(Vector3(1.4, OVEN_FLOOR - 0.04, 1.3), stone, Vector3(OVEN_X, (OVEN_FLOOR - 0.04) / 2.0, -0.1)))
+	for x in [-0.45, 0.0, 0.45]:
+		add_child(Util.box(Vector3(0.36, 0.02, 0.02), Color("#7a6e63"), Vector3(OVEN_X + x, 0.45, 0.555)))
+	add_child(Util.box(Vector3(1.34, 0.05, 1.2), Color("#c9b49a"), Vector3(OVEN_X, OVEN_FLOOR - 0.025, -0.1)))
+	# Kubbe: yarım küre arkaya dönük, önü açık; içi de görünsün diye çift yüzlü.
+	var dome_mat := StandardMaterial3D.new()
+	dome_mat.albedo_color = Color("#a5583c")
+	dome_mat.roughness = 0.95
+	dome_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# SphereMesh yarım küresi ağzı kapakla kapattığından kabuk elle örülür:
+	# önde yarım daire ağız, arkaya doğru çeyrek küre.
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var cols := 16
+	var rows := 8
+	for r in rows:
+		for c in cols:
+			var quad: Array[Vector3] = []
+			for k in [[c, r], [c + 1, r], [c + 1, r + 1], [c, r + 1]]:
+				var a: float = PI * k[0] / cols
+				var v: float = PI * 0.5 * k[1] / rows
+				quad.append(Vector3(cos(a) * cos(v) * 0.62, sin(a) * cos(v) * 0.47, -sin(v) * 0.62))
+			for idx in [0, 1, 2, 0, 2, 3]:
+				st.add_vertex(quad[idx])
+	st.generate_normals()
+	var dome := MeshInstance3D.new()
+	dome.mesh = st.commit()
+	dome.material_override = dome_mat
+	dome.position = Vector3(OVEN_X, OVEN_FLOOR, 0.25)
+	add_child(dome)
+	# Ağızdaki tuğla kemer
+	for i in 13:
+		var a := PI * i / 12.0
+		var brick := Util.box(Vector3(0.15, 0.085, 0.14), Color("#b8623f") if i % 2 == 0 else Color("#97492f"),
+			Vector3(OVEN_X + cos(a) * 0.62, OVEN_FLOOR + sin(a) * 0.62 * 0.75, 0.27))
+		brick.rotation.z = a + PI / 2.0
+		add_child(brick)
+	add_child(Util.cylinder(0.08, 0.55, Color("#4a423c"), Vector3(OVEN_X, OVEN_FLOOR + 0.6, -0.1)))
+	# Odunlar ve alevler (fırının arka tarafında)
+	for x in [-0.12, 0.1]:
+		var log_mesh := Util.cylinder(0.045, 0.38, Color("#5a3a22"), Vector3(OVEN_X + x, OVEN_FLOOR + 0.05, -0.5))
+		log_mesh.rotation_degrees = Vector3(0, 30.0 if x > 0 else -30.0, 90)
+		add_child(log_mesh)
+	for i in 4:
+		var flame_mat := StandardMaterial3D.new()
+		flame_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		flame_mat.albedo_color = Color("#ffcf5a") if i % 2 == 0 else Color("#ff7a2a")
+		flame_mat.emission_enabled = true
+		flame_mat.emission = flame_mat.albedo_color
+		flame_mat.emission_energy_multiplier = 2.0
+		var flame := Util.sphere(0.06 if i % 2 == 0 else 0.075, flame_mat, Vector3(OVEN_X - 0.15 + i * 0.1, OVEN_FLOOR + 0.12, -0.48 + (i % 2) * 0.04))
+		add_child(flame)
+		_flames.append(flame)
+	_oven_light = OmniLight3D.new()
+	_oven_light.position = Vector3(OVEN_X, OVEN_FLOOR + 0.25, -0.25)
+	_oven_light.light_color = Color("#ff8a3a")
+	_oven_light.omni_range = 1.9
+	add_child(_oven_light)
+	# Kürek: uzun sap, ucunda yassı ahşap kürek; ürün kürekte taşınır.
+	_peel = Node3D.new()
+	_peel.visible = false
+	add_child(_peel)
+	var wood := Color("#c89a63")
+	_peel.add_child(Util.box(Vector3(0.34, 0.012, 0.32), wood, Vector3.ZERO))
+	var handle := Util.cylinder(0.018, 1.1, Color("#a97b48"), Vector3(0, 0.01, 0.7))
+	handle.rotation_degrees.x = 90
+	_peel.add_child(handle)
+	_peel_tray = Node3D.new()
+	_peel_tray.position.y = 0.01
+	_peel.add_child(_peel_tray)
+
+
+## Çiğ hamuru kürekle fırına sürer: ürün kürek yerine varınca fırında görünür.
+func _peel_in(slot: CookSlot, id: String) -> void:
+	slot.hide_item(true)
+	_load_peel(Items.model(id, Util.material(Items.cook_color(id, 0.0))))
+	_peel_move(slot, func() -> void:
+		_load_peel(null)
+		slot.hide_item(false)
+		Sfx.play("collect", 0.1)
+	)
+
+
+## Pişen ürünü kürekle fırından çıkarır.
+func _peel_out(slot: CookSlot, id: String, quality: int) -> void:
+	var item := Items.model(id, Util.material(Items.quality_color(id, quality)))
+	_load_peel(null)
+	_peel_move(slot, func() -> void: _load_peel(item))
+
+
+func _load_peel(item: Node3D) -> void:
+	for child in _peel_tray.get_children():
+		child.queue_free()
+	if item:
+		_peel_tray.add_child(item)
+
+
+## Kürek fırının ağzından pişirme yerine gider, at_slot çağrılır, sonra geri çekilip kaybolur.
+func _peel_move(slot: CookSlot, at_slot: Callable) -> void:
+	var target := Vector3(slot.position.x, OVEN_FLOOR + 0.015, slot.position.z)
+	var rest := Vector3(target.x, OVEN_FLOOR + 0.05, PEEL_REST_Z)
+	# Önceki kürek hareketi yarıda kesilirse bekleyen adımı (ürünü bırakma) tamamla.
+	if _peel_tween and _peel_tween.is_valid():
+		_peel_tween.kill()
+		if _peel_pending.is_valid():
+			_peel_pending.call()
+	_peel_pending = at_slot
+	_peel.position = rest
+	_peel.visible = true
+	var tween := _peel.create_tween()
+	_peel_tween = tween
+	tween.tween_property(_peel, "position", target, 0.32).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_callback(func() -> void:
+		_peel_pending = Callable()
+		at_slot.call()
+	)
+	tween.tween_interval(0.08)
+	tween.tween_property(_peel, "position", rest + Vector3(0, 0, 0.35), 0.35).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	tween.tween_callback(func() -> void:
+		_peel.visible = false
+		_load_peel(null)
+	)

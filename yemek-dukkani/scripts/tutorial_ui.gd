@@ -7,7 +7,7 @@ extends Control
 const C_MUTED := Color("#8a7a72")
 const STEPS := [
 	"Hoş geldin patron! İlk müşterin kapıdan giriyor. Kasaya gelince başının üstündeki kartta ne istediği yazacak.",
-	"Müşteri kasada. Kartındaki 'Sipariş Al' butonuna bas.",
+	"Müşteri kasada. 'Sipariş Al'a bas, kasada balondaki istediklerini menüden seç ve 'Ödeme Al'a bas.",
 	"Ödemeyi al: kartla öderse 'Kartı Okut'a bas, nakit verirse çekmeceden paraüstünü seçip ver.",
 	"Sipariş alındı! Müşteri numarasıyla bekliyor. Hazırlamak için alttan Mutfak'a geç.",
 	"Alttaki Köfte butonuna dokun, köfte ızgaraya konsun.",
