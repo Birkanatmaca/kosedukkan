@@ -152,7 +152,9 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_update_door(delta)
 	# Salon kalabalıklaştıkça uğultu artar.
-	Sfx.set_loop_level("crowd", 0.0 if not GameState.setup_done else clampf(_customer_count() / 8.0, 0.2, 1.0))
+	# Salon kalabalığı döngüsü kapalı: bant gürültüsünden yapılan mırıltı telefonda
+	# müşteriler yürürken sürekli sürtünme / cızırtı gibi duyuluyordu.
+	Sfx.set_loop_level("crowd", 0.0)
 	_spawn_timer -= delta
 	if _spawn_timer <= 0.0:
 		_spawn_timer = Progression.spawn_interval(GameState.level, GameState.rating()) * (1.0 - Decor.spawn_bonus(GameState.decor))

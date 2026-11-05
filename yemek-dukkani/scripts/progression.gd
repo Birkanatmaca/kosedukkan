@@ -112,7 +112,7 @@ static func takeaway_chance(level: int) -> float:
 ## Sipariş verdikten sonra yemeğini bekleme sabrı (saniye): ürün başına süre
 ## eklenir, seviyeyle biraz kısalır. Dolarsa para iade edilir, kötü yorum gelir.
 static func food_patience(level: int, item_count: int) -> float:
-	var base := maxf(50.0, 80.0 - 2.5 * (level - 1)) + 15.0 * item_count
+	var base := maxf(70.0, 100.0 - 2.0 * (level - 1)) + 18.0 * item_count
 	if calm():
 		base *= CALM_PATIENCE_FACTOR
 	return base
@@ -145,14 +145,14 @@ static func delivery_order(level: int) -> Dictionary:
 
 ## Yeni müşteri gelme aralığı (saniye). İyi puan müşteriyi sıklaştırır.
 static func spawn_interval(level: int, rating: float) -> float:
-	var base := maxf(3.5, 15.0 - 0.9 * (level - 1))
+	var base := maxf(5.0, 18.0 - 0.8 * (level - 1))
 	if calm():
 		base *= CALM_SPAWN_FACTOR
 	return base * lerpf(1.4, 0.8, clampf((rating - 1.0) / 4.0, 0.0, 1.0)) * price_demand()
 
 
 static func patience(level: int, item_count: int, comfort_level: int) -> float:
-	var base := maxf(30.0, 60.0 - 3.0 * (level - 1)) + 10.0 * item_count
+	var base := maxf(45.0, 80.0 - 2.5 * (level - 1)) + 14.0 * item_count
 	if calm():
 		base *= CALM_PATIENCE_FACTOR
 	return base * (1.0 + 0.12 * comfort_level)

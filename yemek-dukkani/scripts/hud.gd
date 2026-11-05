@@ -1656,7 +1656,8 @@ func _build_quest_button() -> void:
 func _place_quest_button() -> void:
 	var ringing: bool = not main.shop.call.is_empty() and not main.shop.call["open"]
 	_quest_btn.visible = GameState.setup_done and not GameState.tutorial_active() \
-		and not GameState.quests.is_empty() and not ringing
+		and not GameState.quests.is_empty() and not ringing \
+		and not _order_entry.visible and not _payment.visible
 	if not _quest_btn.visible:
 		return
 	_quest_btn.position = Vector2(_top_bar.position.x, _top_bar.position.y + _top_bar.size.y + 10)

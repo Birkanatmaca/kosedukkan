@@ -1,23 +1,24 @@
 class_name OrderEntry
 extends Control
 
-## Kasa ekranı (POS): kamera kasanın dokunmatik ekranına yaklaşır, bu arayüz de
-## tam o ekranın üstüne oturur (Hud her karede ekranın köşelerini yansıtıp place()
-## ile yerleştirir). Müşterinin isteği üstte görünür; kasiyer menüden dokunarak
+## Kasa ekranı (POS): üst bar ile alt menü arasını dolduran büyük panel (Hud her
+## karede place() ile yerleştirir, arkadaki sahne bulanıklaşır). Müşterinin isteği
+## üstte büyük resimlerle görünür; kasiyer menüdeki büyük ürün kartlarına dokunarak
 ## fişi oluşturur (fişteki ürüne dokununca bir adet çıkar). "Ödeme Al" fiş istekle
 ## tutuyorsa ödemeye geçer; tutmuyorsa müşteri itiraz eder, sabrı biraz azalır.
 
 signal confirmed(customer: ShopCustomer)
 signal cancelled(customer: ShopCustomer)
 
-## Kasa ekranının tasarım boyutu (4:3). Ekrana sığacak şekilde ölçeklenir.
-const DESIGN := Vector2(660, 495)
+## Kasa ekranının tasarım genişliği; yükseklik ekrandaki alana göre değişir
+## (place() genişliğe göre ölçekler, kalan yükseklik içeriğe verilir).
+const DESIGN := Vector2(660, 1000)
 ## POS renkleri: koyu çerçeve, açık ekran, mavi başlık şeridi
 const BEZEL := Color("#1d2127")
 const SCREEN_BG := Color("#f3f6fa")
 const HEADER := Color("#2459b8")
 ## Yanlış fişte müşterinin sabrından düşen süre (sn)
-const WRONG_PENALTY := 4.0
+const WRONG_PENALTY := 2.0
 
 var customer: ShopCustomer
 
@@ -41,67 +42,84 @@ func _ready() -> void:
 	visible = false
 	_sheet = pos_frame(self)
 	var box: VBoxContainer = _sheet.get_meta("box")
+	box.add_theme_constant_override("separation", 12)
 
 	var header := pos_header(box)
-	_title = UiKit.label("", 24, Color.WHITE, 900)
+	_title = UiKit.label("", 30, Color.WHITE, 900)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_title.clip_text = true
 	header.add_child(_title)
-	_total = UiKit.label("₺0", 34, Color.WHITE, 900)
+	_total = UiKit.label("₺0", 44, Color.WHITE, 900)
 	header.add_child(_total)
 
-	# Müşterinin isteği
-	var wants_row := HBoxContainer.new()
-	wants_row.add_theme_constant_override("separation", 10)
-	box.add_child(wants_row)
-	wants_row.add_child(UiKit.icon_rect("message-circle", HEADER, 26))
-	wants_row.add_child(UiKit.label("İstediği:", 19, HEADER, 900))
+	# Müşterinin isteği: büyük resimler, adet ve ad
+	var wants_card := PanelContainer.new()
+	var wants_style := UiKit.flat(Color("#fff4dc"), 16, 12)
+	wants_style.border_color = Color("#f0c070")
+	wants_style.set_border_width_all(3)
+	wants_card.add_theme_stylebox_override("panel", wants_style)
+	box.add_child(wants_card)
+	var wants_box := VBoxContainer.new()
+	wants_box.add_theme_constant_override("separation", 6)
+	wants_card.add_child(wants_box)
+	var wants_head := HBoxContainer.new()
+	wants_head.add_theme_constant_override("separation", 8)
+	wants_box.add_child(wants_head)
+	wants_head.add_child(UiKit.icon_rect("message-circle", UiKit.ORANGE, 30))
+	wants_head.add_child(UiKit.label("Müşterinin İsteği", 24, UiKit.TEXT, 900))
 	_wants = HBoxContainer.new()
-	_wants.add_theme_constant_override("separation", 12)
-	wants_row.add_child(_wants)
+	_wants.alignment = BoxContainer.ALIGNMENT_CENTER
+	_wants.add_theme_constant_override("separation", 22)
+	wants_box.add_child(_wants)
 
-	# Menü: 5 sütunlu ürün tuşları (açık ürünler görünür)
+	# Menü: 3 sütunlu büyük ürün kartları (resim üstte, ad ve fiyat altta)
+	box.add_child(UiKit.label("Menü  •  ürüne dokun, fişe eklensin", 20, UiKit.MUTED, 900))
+	# Kısa ekranlarda menü kayar; diğer her şey yerinde kalır.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	box.add_child(scroll)
 	var menu := GridContainer.new()
-	menu.columns = 5
-	menu.add_theme_constant_override("h_separation", 8)
-	menu.add_theme_constant_override("v_separation", 6)
-	box.add_child(menu)
+	menu.columns = 3
+	menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	menu.add_theme_constant_override("h_separation", 10)
+	menu.add_theme_constant_override("v_separation", 10)
+	scroll.add_child(menu)
 	for id in Items.PRODUCTS:
-		var btn := pos_button(Items.display_name(id), Color.WHITE, UiKit.TEXT, 12)
+		var btn := pos_button(Items.display_name(id), Color.WHITE, UiKit.TEXT, 22)
 		_menu_buttons[id] = btn
-		btn.custom_minimum_size = Vector2(0, 76)
+		btn.custom_minimum_size = Vector2(0, 140)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.icon = Icons.food(id)
-		# İkon solda, ad ve fiyat sağında: 10 ürüne kadar iki sıraya sığar.
-		btn.add_theme_constant_override("icon_max_width", 27)
-		btn.add_theme_constant_override("h_separation", 2)
-		btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
-		btn.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		btn.add_theme_constant_override("icon_max_width", 70)
+		btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+		btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
 		btn.clip_text = true
 		btn.pressed.connect(_add.bind(id))
 		menu.add_child(btn)
 
 	# Fiş satırı
 	var ticket_box := PanelContainer.new()
-	var ticket_style := UiKit.flat(Color("#e6ecf4"), 12, 6)
+	var ticket_style := UiKit.flat(Color("#e6ecf4"), 14, 10)
 	ticket_box.add_theme_stylebox_override("panel", ticket_style)
-	ticket_box.custom_minimum_size = Vector2(0, 56)
+	ticket_box.custom_minimum_size = Vector2(0, 92)
 	box.add_child(ticket_box)
 	_ticket_row = HBoxContainer.new()
-	_ticket_row.add_theme_constant_override("separation", 6)
+	_ticket_row.add_theme_constant_override("separation", 8)
 	ticket_box.add_child(_ticket_row)
 
 	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 10)
+	actions.add_theme_constant_override("separation", 12)
 	box.add_child(actions)
-	var cancel := pos_button("Vazgeç", Color("#d7dde6"), UiKit.TEXT, 22)
-	cancel.custom_minimum_size = Vector2(170, 62)
+	var cancel := pos_button("Vazgeç", Color("#d7dde6"), UiKit.TEXT, 28)
+	cancel.custom_minimum_size = Vector2(200, 96)
 	cancel.pressed.connect(_cancel)
 	actions.add_child(cancel)
-	_pay = pos_button("Ödeme Al", UiKit.GREEN, Color.WHITE, 26)
-	UiKit.set_icon(_pay, "wallet", 28)
+	_pay = pos_button("Ödeme Al", UiKit.GREEN, Color.WHITE, 34)
+	UiKit.set_icon(_pay, "wallet", 36)
 	_pay.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_pay.custom_minimum_size = Vector2(0, 62)
+	_pay.custom_minimum_size = Vector2(0, 96)
 	_pay.pressed.connect(_confirm)
 	actions.add_child(_pay)
 
@@ -207,11 +225,19 @@ static func pos_button(text: String, bg: Color, fg: Color, font_size: int) -> Bu
 	return btn
 
 
-## Arayüzü kasa ekranının telefondaki dikdörtgenine oturtur.
+## Arayüzü telefondaki kasa ekranı alanına oturtur.
 func place(rect: Rect2) -> void:
-	_sheet.position = rect.position + Vector2(_shake, 0)
-	_sheet.scale = rect.size / DESIGN
-	_sheet.size = OrderEntry.DESIGN
+	fit(_sheet, rect)
+	_sheet.position.x += _shake
+
+
+## Paneli genişliğe göre ölçekler; yükseklik alanın tamamını kullanır.
+static func fit(sheet: Control, rect: Rect2) -> void:
+	var s := rect.size.x / DESIGN.x
+	sheet.scale = Vector2(s, s)
+	sheet.custom_minimum_size = Vector2(DESIGN.x, rect.size.y / s)
+	sheet.size = sheet.custom_minimum_size
+	sheet.position = rect.position
 
 
 # --- Sipariş ------------------------------------------------------------------
@@ -220,17 +246,23 @@ func open(c: ShopCustomer) -> void:
 	customer = c
 	# Menüdeki fiyatlar oyuncunun ayarladığı satış fiyatlarıdır.
 	for id in _menu_buttons:
-		(_menu_buttons[id] as Button).text = "%s\n₺%d" % [Items.display_name(id), Items.price(id)]
 		(_menu_buttons[id] as Button).visible = Items.unlocked(id)
 	_ticket.clear()
 	_title.text = "Sipariş • " + c.customer_name + ("  (PAKET)" if c.takeaway else "")
 	for child in _wants.get_children():
 		child.queue_free()
 	for id in c.order:
-		var item := HBoxContainer.new()
-		item.add_theme_constant_override("separation", 2)
-		item.add_child(UiKit.food_rect(id, 38))
-		item.add_child(UiKit.label("×%d" % int(c.order[id]), 21, UiKit.TEXT, 900))
+		var item := VBoxContainer.new()
+		item.add_theme_constant_override("separation", 0)
+		var pic_row := HBoxContainer.new()
+		pic_row.add_theme_constant_override("separation", 4)
+		pic_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		item.add_child(pic_row)
+		pic_row.add_child(UiKit.food_rect(id, 84))
+		pic_row.add_child(UiKit.label("×%d" % int(c.order[id]), 38, UiKit.TEXT, 900))
+		var name_l := UiKit.label(Items.display_name(id), 20, UiKit.MUTED, 900)
+		name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		item.add_child(name_l)
 		_wants.add_child(item)
 	_refresh()
 	visible = true
@@ -261,20 +293,35 @@ func _remove(id: String) -> void:
 func _refresh() -> void:
 	for child in _ticket_row.get_children():
 		child.queue_free()
-	var label := UiKit.label("FİŞ", 16, UiKit.MUTED, 900)
-	label.custom_minimum_size = Vector2(40, 0)
+	var label := UiKit.label("FİŞ", 20, UiKit.MUTED, 900)
+	label.custom_minimum_size = Vector2(50, 0)
 	_ticket_row.add_child(label)
 	var total := 0
 	for id in _ticket:
 		total += Items.price(id) * int(_ticket[id])
-		var chip := pos_button("×%d" % int(_ticket[id]), Color.WHITE, UiKit.TEXT, 20)
+		var chip := pos_button("×%d" % int(_ticket[id]), Color.WHITE, UiKit.TEXT, 28)
 		chip.icon = Icons.food(id)
-		chip.add_theme_constant_override("icon_max_width", 32)
-		chip.custom_minimum_size = Vector2(0, 50)
+		chip.add_theme_constant_override("icon_max_width", 48)
+		chip.custom_minimum_size = Vector2(0, 72)
 		chip.pressed.connect(_remove.bind(id))
 		_ticket_row.add_child(chip)
 	if _ticket.is_empty():
-		_ticket_row.add_child(UiKit.label("Menüden ürünlere dokun, fişe eklensin", 18, UiKit.MUTED))
+		var hint := UiKit.label("Fiş boş. Ürüne tekrar dokunursan fişten çıkar.", 20, UiKit.MUTED)
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_ticket_row.add_child(hint)
+	# Menü kartlarında fiyat ve fişteki adet; fişte olan kart vurgulanır.
+	for id in _menu_buttons:
+		var btn: Button = _menu_buttons[id]
+		var n := int(_ticket.get(id, 0))
+		btn.text = "%s\n₺%d" % [Items.display_name(id), Items.price(id)] + ("  •  ×%d" % n if n > 0 else "")
+		var bg := Color("#d9f2d0") if n > 0 else Color.WHITE
+		var normal := UiKit.flat(bg, 14, 6)
+		normal.border_color = UiKit.GREEN if n > 0 else Color("#d3dae4")
+		normal.set_border_width_all(3 if n > 0 else 1)
+		normal.border_width_bottom = 5 if n > 0 else 3
+		for state in ["normal", "hover", "focus"]:
+			btn.add_theme_stylebox_override(state, normal)
 	_total.text = "₺%d" % total
 	_pay.disabled = _ticket.is_empty()
 

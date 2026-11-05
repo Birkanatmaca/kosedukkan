@@ -54,10 +54,10 @@ static var _tinted := {}
 
 ## Pişme oranı (doneness) eşikleri: 1.0 = tam pişme süresi.
 const RAW_LIMIT := 0.5
-const UNDER_LIMIT := 0.85
-const PERFECT_LIMIT := 1.2
-const BURNT_LIMIT := 1.6
-const MAX_DONENESS := 1.8
+const UNDER_LIMIT := 0.8
+const PERFECT_LIMIT := 1.3
+const BURNT_LIMIT := 1.75
+const MAX_DONENESS := 1.95
 
 
 ## Ürün menüde mi?
@@ -90,7 +90,7 @@ static func display_name(id: String) -> String:
 
 ## Kıvam çubuğunun tam ortası: pişme oranı 1.0'a bu kadar yakınken alınan ürün
 ## "tam kıvam" sayılır, bonus kazandırır.
-const BULLSEYE := 0.08
+const BULLSEYE := 0.1
 
 
 static func is_bullseye(doneness: float) -> bool:

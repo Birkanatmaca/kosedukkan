@@ -100,45 +100,24 @@ func _play_intro(layer: CanvasLayer) -> void:
 	tween.tween_callback(intro.queue_free)
 
 
-## Kamerayı kasanın ekranına yaklaştırır (sipariş ve ödeme ekranın üstünde yapılır)
-## ya da dükkan görünümüne geri döndürür. Ekran telefonun genişliğini doldurur ve
-## üst yarıda durur.
+## Sipariş / ödeme ekranı açıkken kasa odağı. Kamera yerinden oynamaz (3D kasaya
+## yakın plan kötü görünüyordu); arkadaki sahne bulanıklaşır, ekran büyük bir
+## panel olarak açılır.
 func focus_register(on: bool) -> void:
 	if screen != SHOP or on == register_focus:
 		return
 	register_focus = on
-	var target := _views[SHOP]
-	if on:
-		target = _register_screen_view()
-	var tween := create_tween()
-	tween.tween_property(camera, "global_transform", target, 0.5).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 
 
-func _register_screen_view() -> Transform3D:
-	var reg := shop.register
-	var basis := reg.global_basis.orthonormalized()
-	var normal := (basis * CashRegister.SCREEN_NORMAL).normalized()
-	var up := (basis * CashRegister.SCREEN_UP).normalized()
-	var view_size := get_viewport().get_visible_rect().size
-	var rect := pos_screen_rect()
-	# 3D ekran, arayüzün oturduğu alanın %88'i genişliğinde görünsün (arayüz onu tam örter).
-	var visible_w := CashRegister.SCREEN_RIGHT.length() * 2.0 * view_size.x / (rect.size.x * 0.88)
-	var distance := visible_w / (2.0 * tan(deg_to_rad(camera.fov * 0.5)))
-	# Ekranın ortası arayüz alanının ortasına gelsin.
-	var shift := (view_size.y * 0.5 - rect.get_center().y) / view_size.x * visible_w
-	var center := reg.global_transform * CashRegister.SCREEN_CENTER
-	return Transform3D(Basis.looking_at(-normal, up), center - up * shift + normal * distance)
-
-
-## Kasa ekranı arayüzünün telefondaki yeri: telefon genişliğinde, 4:3, üst bar ile
-## alt menü arasında dikeyde ortalı.
+## Kasa ekranı arayüzünün telefondaki yeri: üst bar ile alt menü arasındaki
+## alanın tamamı (çok uzun ekranlarda en fazla genişliğin 1.75 katı, ortalı).
 func pos_screen_rect() -> Rect2:
 	var view_size := get_viewport().get_visible_rect().size
 	var width := view_size.x - 24.0
-	var height := width * 0.75
-	var top := 120.0 + hud.safe_top()
-	var bottom := view_size.y - 150.0
-	return Rect2(12.0, maxf(top, (top + bottom - height) * 0.5), width, height)
+	var top := 190.0 + hud.safe_top()
+	var bottom := view_size.y - 160.0
+	var height := minf(bottom - top, width * 1.75)
+	return Rect2(12.0, top + (bottom - top - height) * 0.5, width, height)
 
 
 ## Mutfakta kamerayı ızgaraya / fritöze yaklaştırır ya da genel görünüme döner.

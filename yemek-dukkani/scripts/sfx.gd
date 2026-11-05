@@ -35,7 +35,7 @@ const SOUNDS := [
 	"spray", "car_pass", "level_up", "day_end", "phone_ring", "scooter",
 ]
 ## Kısa seslerin varsayılan yüksekliği (dB); verilmeyenler 0
-const VOLUME := { "scooter": -8.0, "phone_ring": -3.0, "car_pass": -10.0, "door_bell": -4.0, "spray": -6.0, "tap": -4.0, "beep": -3.0 }
+const VOLUME := { "scooter": -8.0, "phone_ring": -3.0, "car_pass": -16.0, "door_bell": -4.0, "spray": -6.0, "tap": -4.0, "beep": -3.0 }
 ## Döngüler: ad -> [dosya, en yüksek ses (dB), hangi ekranlarda tam duyulur, kategori]
 ## Ekranlar: 0 market, 1 dükkan, 2 mutfak. Diğer ekranlarda AWAY oranında kısık.
 const LOOPS := {
