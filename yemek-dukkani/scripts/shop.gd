@@ -141,6 +141,8 @@ var _sign_trim: MeshInstance3D
 var _sign_lamps: Array[Node3D] = []
 var _ceiling: MeshInstance3D
 var _ceiling_open := false
+## Tavan lambaları (kuşbakışında tavanla birlikte gizlenir)
+var _ceiling_lamps: Array[Node3D] = []
 ## Dekor mağazası: kapı kanadı ve pencere / kapı çerçevesi rengi, halılar, süsler
 var _door_mat := StandardMaterial3D.new()
 var _frame_mat := StandardMaterial3D.new()
@@ -1434,7 +1436,9 @@ func _build_room() -> void:
 	# Koridor boyunca sarkan lambalar: kurulumda alınmadıysa kırık ve sönük.
 	# En arkadaki lamba tabelanın önüne düşmesin diye kapıdan biraz uzakta.
 	for z in [-2.2, -4.6, -7.0]:
-		add_child(Util.model("lighting/tavan_lambasi", Vector3(0, 3.62, z), 0.0, 1.2))
+		var hanging := Util.model("lighting/tavan_lambasi", Vector3(0, 3.62, z), 0.0, 1.2)
+		add_child(hanging)
+		_ceiling_lamps.append(hanging)
 		var bulb := Util.sphere(0.08, Color("#ffd27a"), Vector3(0, 3.66, z))
 		add_child(bulb)
 		_bulbs.append(bulb)
@@ -1560,6 +1564,10 @@ func _apply_decor() -> void:
 func set_ceiling_open(open: bool) -> void:
 	_ceiling_open = open
 	_ceiling.visible = GameState.setup_done and not open
+	for lamp in _ceiling_lamps:
+		lamp.visible = not open
+	for bulb in _bulbs:
+		bulb.visible = not open
 
 
 ## Boşluklu duvar: boşlukların etrafını kutularla doldurur.

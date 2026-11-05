@@ -22,7 +22,7 @@ signal kitchen_view_changed(view: String)
 ## Dükkanı incelemek için kamera açıları: [ad, göz, hedef]. İlki oyunun normal açısı.
 const SHOP_CAMS := [
 	["Genel", Vector3(0, 2.5, 3.3), Vector3(0, 0.95, -4.5)],
-	["Kuşbakışı", Vector3(0, 13.5, 0.4), Vector3(0, 0, -4.3)],
+	["Kuşbakışı", Vector3(0, 9.0, 3.6), Vector3(0, 0.2, -4.6)],
 	["Salon", Vector3(-4.9, 2.9, -9.4), Vector3(0.8, 0.9, -0.2)],
 	["Köşe", Vector3(5.1, 3.4, 1.0), Vector3(-1.2, 0.6, -5.8)],
 	["Kasa", Vector3(0.3, 2.0, 2.7), Vector3(0.1, 1.0, -0.6)],
