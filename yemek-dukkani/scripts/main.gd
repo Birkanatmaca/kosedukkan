@@ -84,19 +84,22 @@ func _ready() -> void:
 	_play_intro(fade_layer)
 
 
-## Açılış ekranındaki "Yükleniyor" görseli oyunun ilk karelerinde de üstte kalır
-## (ikonlar ve modeller bu sırada hazırlanır), sonra yumuşakça kaybolur.
+## Açılış görseli (splash.png) LoadingScreen'in ilk karesidir: oyun açılınca aynı
+## ekran üstte kalır, ilk karelerde (ikonlar ve modeller hazırlanırken) çubuk dolar,
+## sonra ekran hafifçe büyüyerek kaybolur.
 func _play_intro(layer: CanvasLayer) -> void:
-	var intro := TextureRect.new()
-	intro.texture = load(ProjectSettings.get_setting("application/boot_splash/image"))
-	intro.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	intro.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	intro.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	intro.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var intro := LoadingScreen.new()
 	layer.add_child(intro)
+	intro.progress = 0.12
+	intro.pivot_offset = get_viewport().get_visible_rect().size * 0.5
 	var tween := intro.create_tween()
-	tween.tween_interval(0.5)
+	tween.tween_property(intro, "progress", 0.7, 0.35).set_ease(Tween.EASE_OUT)
+	tween.tween_callback(func() -> void: intro.status = "Fırın ısınıyor…")
+	tween.tween_property(intro, "progress", 1.0, 0.35).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_callback(func() -> void: intro.status = "Dükkan açıldı!")
+	tween.tween_interval(0.2)
 	tween.tween_property(intro, "modulate:a", 0.0, 0.35)
+	tween.parallel().tween_property(intro, "scale", Vector2(1.06, 1.06), 0.35)
 	tween.tween_callback(intro.queue_free)
 
 

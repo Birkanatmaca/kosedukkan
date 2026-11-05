@@ -11,8 +11,8 @@ config_version=5
 [application]
 
 config/name="Köşe Dükkan"
-config/icon="res://assets/brand/logo-option-4-realistic-shop-city.png"
-boot_splash/bg_color=Color(0.788, 0.251, 0.157, 1)
+config/icon="res://assets/brand/uygulama-gorseli-tam-kare.png"
+boot_splash/bg_color=Color(0.165, 0.059, 0.031, 1)
 boot_splash/stretch_mode=4
 boot_splash/image="res://assets/brand/splash.png"
 run/main_scene="res://scenes/main.tscn"
