@@ -19,6 +19,18 @@ var register_focus := false
 ## Mutfakta kameranın baktığı yer: "" genel, "izgara" ya da "fritoz" yakın plan
 var kitchen_view := ""
 signal kitchen_view_changed(view: String)
+## Dükkanı incelemek için kamera açıları: [ad, göz, hedef]. İlki oyunun normal açısı.
+const SHOP_CAMS := [
+	["Genel", Vector3(0, 2.5, 3.3), Vector3(0, 0.95, -4.5)],
+	["Kuşbakışı", Vector3(0, 13.5, 0.4), Vector3(0, 0, -4.3)],
+	["Salon", Vector3(-4.9, 2.9, -9.4), Vector3(0.8, 0.9, -0.2)],
+	["Köşe", Vector3(5.1, 3.4, 1.0), Vector3(-1.2, 0.6, -5.8)],
+	["Kasa", Vector3(0.3, 2.0, 2.7), Vector3(0.1, 1.0, -0.6)],
+]
+const KITCHEN_CAM_NAMES := { "": "Genel", "izgara": "Izgara", "fritoz": "Fritöz", "firin": "Fırın" }
+## Dükkandaki kamera açısının sırası (SHOP_CAMS)
+var shop_cam := 0
+signal camera_changed(name: String)
 var camera: Camera3D
 var market: Market
 var shop: Shop
@@ -142,6 +154,39 @@ func kitchen_focus(view: String) -> void:
 	tween.tween_property(camera, "global_transform", target, 0.5).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 
 
+## Kamera düğmesi: dükkanda açılar arasında, mutfakta cihazlar arasında döner.
+func cycle_camera() -> void:
+	if transitioning:
+		return
+	match screen:
+		SHOP:
+			_set_shop_cam((shop_cam + 1) % SHOP_CAMS.size())
+		KITCHEN:
+			var views: Array[String] = [""]
+			for device in ["izgara", "fritoz", "firin"]:
+				if GameState.menu_devices().has(device):
+					views.append(device)
+			kitchen_focus(views[(views.find(kitchen_view) + 1) % views.size()])
+			camera_changed.emit(camera_name())
+
+
+func camera_name() -> String:
+	match screen:
+		SHOP: return SHOP_CAMS[shop_cam][0]
+		KITCHEN: return KITCHEN_CAM_NAMES.get(kitchen_view, "Genel")
+	return ""
+
+
+func _set_shop_cam(index: int) -> void:
+	shop_cam = index
+	# Kuşbakışında tavan kalkar, salonun tamamı görünür.
+	shop.set_ceiling_open(SHOP_CAMS[index][0] == "Kuşbakışı")
+	var target := _views[SHOP] if index == 0 else _view(shop, SHOP_CAMS[index][1], SHOP_CAMS[index][2])
+	var tween := create_tween()
+	tween.tween_property(camera, "global_transform", target, 0.6).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	camera_changed.emit(camera_name())
+
+
 func _process(_delta: float) -> void:
 	# Dikey ekranda genişliği, yatay ekranda (masaüstü) yüksekliği sabit tut.
 	var view_size := get_viewport().get_visible_rect().size
@@ -154,6 +199,10 @@ func go_to(target: int) -> void:
 	if target == screen or transitioning or not GameState.setup_done:
 		return
 	register_focus = false
+	if shop_cam != 0:
+		shop_cam = 0
+		shop.set_ceiling_open(false)
+		camera_changed.emit(camera_name())
 	kitchen_view = ""
 	kitchen_view_changed.emit("")
 	screen = target

@@ -30,12 +30,17 @@ var _phone: Node3D
 var _phone_screen: StandardMaterial3D
 var _phone_holder: Node3D
 var _ringing := false
+## Ek Kasa: sadece kasa ve POS (bahşiş kavanozu ve telefon ana kasada).
+var secondary := false
 var _ring_t := 0.0
 
 
 func _ready() -> void:
 	_build_register()
 	_build_pos()
+	if secondary:
+		show_idle()
+		return
 	_build_jar()
 	_build_phone()
 	show_idle()

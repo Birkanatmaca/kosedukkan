@@ -13,7 +13,12 @@ const WALL_COLORS := [
 	{ "name": "Gül", "wall": Color("#f7dde0"), "side": Color("#f0cdd2"), "panel": Color("#b5546a") },
 	{ "name": "Gök", "wall": Color("#dbe8f7"), "side": Color("#cadcf0"), "panel": Color("#3f6fae") },
 	{ "name": "Limon", "wall": Color("#fbf1c7"), "side": Color("#f3e6ad"), "panel": Color("#c79a2e") },
+	{ "name": "Lavanta", "wall": Color("#e6def3"), "side": Color("#dbd0ec"), "panel": Color("#6f58a8") },
+	{ "name": "Şeftali", "wall": Color("#fbe0cc"), "side": Color("#f5d1b8"), "panel": Color("#c8643c") },
+	{ "name": "Zeytin", "wall": Color("#e8e6cf"), "side": Color("#dddab9"), "panel": Color("#6b7036") },
 ]
+## Oyun içinde (Market › Dekor) yeni bir duvar rengi almanın bedeli
+const PAINT_PRICE := 40
 const RUIN_WALL := { "wall": Color("#8c8478"), "side": Color("#7d766b"), "panel": Color("#4f463d") }
 
 const FLOORS := [
@@ -33,6 +38,45 @@ const ITEMS := {
 	"sign": { "name": "Tabela", "icon": "signpost", "desc": "Dükkanının adı kapının üstünde", "price": 25, "required": false },
 }
 
+## Oyun içi dekor mağazası (Market › Dekor). Her kategoride bir seçenek seçilidir;
+## alınan seçenek sahiplenilir, sonra ücretsiz geri dönülebilir. İlk seçenek bedava.
+## key: GameState.decor içindeki alan.
+const STYLES := {
+	"rug": { "name": "Giriş Halısı", "icon": "layout-grid", "key": "rug", "options": [
+		{ "name": "Yok", "price": 0, "color": Color("#b8ada0") },
+		{ "name": "Yeşil Paspas", "price": 35, "color": Color("#3f7f5a") },
+		{ "name": "Kırmızı Kilim", "price": 70, "color": Color("#b53a2c") },
+		{ "name": "Uzun Yolluk", "price": 120, "color": Color("#7a3b6a") },
+	] },
+	"door": { "name": "Kapı", "icon": "door-open", "key": "door", "options": [
+		{ "name": "Ahşap", "price": 0, "color": Color("#7a4b32") },
+		{ "name": "Kırmızı Retro", "price": 100, "color": Color("#b53a2c") },
+		{ "name": "Nane Yeşili", "price": 100, "color": Color("#3f8f6a") },
+		{ "name": "Siyah Metal", "price": 130, "color": Color("#2b2d33") },
+	] },
+	"window": { "name": "Pencere Çerçevesi", "icon": "app-window", "key": "window_style", "options": [
+		{ "name": "Beyaz", "price": 0, "color": Color("#f7f4ee") },
+		{ "name": "Ahşap", "price": 80, "color": Color("#8a5a3a") },
+		{ "name": "Yeşil", "price": 80, "color": Color("#3f7f5a") },
+		{ "name": "Siyah", "price": 90, "color": Color("#2b2d33") },
+	] },
+	"table": { "name": "Masa Çeşidi", "icon": "armchair", "key": "table_style", "options": [
+		{ "name": "Klasik", "price": 0, "color": Color("#c9a77a") },
+		{ "name": "Ahşap Kare", "price": 120, "color": Color("#a0703f") },
+		{ "name": "Mermer Yuvarlak", "price": 170, "color": Color("#e9e7e2") },
+		{ "name": "Retro Kırmızı", "price": 150, "color": Color("#c8402f") },
+	] },
+}
+## Süsler: bir kez alınır, sonra açılıp kapatılabilir.
+const ORNAMENTS := {
+	"lights": { "name": "Işık Zinciri", "icon": "sparkles", "desc": "Vitrin duvarında renkli ampuller", "price": 70 },
+	"flowers": { "name": "Vitrin Çiçekleri", "icon": "sprout", "desc": "Pencere önlerinde çiçek kasaları", "price": 55 },
+	"clock": { "name": "Duvar Saati", "icon": "clock", "desc": "Sol duvarda büyük saat", "price": 45 },
+	"frames": { "name": "Tablolar", "icon": "image", "desc": "Sağ duvarda iki tablo", "price": 60 },
+	"nazar": { "name": "Nazar Boncuğu", "icon": "heart", "desc": "Kapının yanında, uğur getirir", "price": 25 },
+	"board": { "name": "Menü Panosu", "icon": "clipboard-list", "desc": "Kapı yanında kara tahta", "price": 50 },
+}
+
 const TABLE_PRICE := 35
 const MAX_SETUP_TABLES := 4
 const PLANT_PRICE := 15
@@ -43,7 +87,73 @@ static func default_state() -> Dictionary:
 	return {
 		"clean": false, "register": false, "paint": false, "windows": false, "lamps": false, "sign": false,
 		"paint_color": 0, "floor": 0, "tables": 0, "plants": 0,
+		"rug": 0, "door": 0, "window_style": 0, "table_style": 0,
+		## Alınan seçenekler ("door:2", "paint:3", "floor:1"...) ve süsler
+		"owned": [], "ornaments": [], "ornaments_off": [],
 	}
+
+
+## Kategorideki seçenek sahiplenilmiş mi? (ilk seçenek ve şu an seçili olan hep sahiplidir)
+static func owns(decor: Dictionary, category: String, index: int) -> bool:
+	if category == "paint":
+		return decor["paint"] and (index == decor["paint_color"] or (decor["owned"] as Array).has("paint:%d" % index))
+	if index == 0 or index == int(decor[_key(category)]):
+		return true
+	return (decor["owned"] as Array).has("%s:%d" % [category, index])
+
+
+static func price_of(category: String, index: int) -> int:
+	match category:
+		"paint": return PAINT_PRICE
+		"floor": return int(FLOORS[index]["price"])
+	return int(STYLES[category]["options"][index]["price"])
+
+
+static func _key(category: String) -> String:
+	match category:
+		"paint": return "paint_color"
+		"floor": return "floor"
+	return STYLES[category]["key"]
+
+
+static func selected(decor: Dictionary, category: String) -> int:
+	return int(decor[_key(category)])
+
+
+## Seçer (sahip değilse önce alır). Döner: ödenen tutar, alınamadıysa -1.
+static func choose(decor: Dictionary, category: String, index: int, money: int) -> int:
+	var cost := 0 if owns(decor, category, index) else price_of(category, index)
+	if cost > money:
+		return -1
+	var tag := "%s:%d" % [category, index]
+	if cost > 0 and not (decor["owned"] as Array).has(tag):
+		(decor["owned"] as Array).append(tag)
+	# Önceki seçim de sahipli kalsın (geri dönülebilsin)
+	var before := "%s:%d" % [category, selected(decor, category)]
+	if not (decor["owned"] as Array).has(before) and (category != "paint" or decor["paint"]):
+		(decor["owned"] as Array).append(before)
+	decor[_key(category)] = index
+	if category == "paint":
+		decor["paint"] = true
+	return cost
+
+
+## Görünen süsler
+static func ornament_on(decor: Dictionary, id: String) -> bool:
+	return (decor["ornaments"] as Array).has(id) and not (decor["ornaments_off"] as Array).has(id)
+
+
+## Oyun içi dekorun puanı: her stil seçimi ve görünen süs biraz sabır ve fiyat
+## toleransı kazandırır.
+static func style_points(decor: Dictionary) -> int:
+	var points := 0
+	for category in STYLES:
+		if int(decor[STYLES[category]["key"]]) > 0:
+			points += 1
+	for id in ORNAMENTS:
+		if ornament_on(decor, id):
+			points += 1
+	return points
 
 
 ## Temizlikçi kıyafeti: [önlük, eldiven]. Önlük duvar boyasının lambri renginde,
@@ -53,7 +163,7 @@ static func uniform_colors(decor: Dictionary) -> Array[Color]:
 	return [panel, panel.lightened(0.35)]
 
 
-## Dekor müşterileri daha sabırlı yapar (en fazla %30).
+## Dekor müşterileri daha sabırlı yapar (en fazla %45).
 static func patience_bonus(decor: Dictionary) -> float:
 	var bonus := 0.0
 	if decor["paint"]:
@@ -65,7 +175,8 @@ static func patience_bonus(decor: Dictionary) -> float:
 	if decor["windows"]:
 		bonus += 0.03
 	bonus += 0.02 * decor["plants"]
-	return minf(bonus, 0.3)
+	bonus += 0.02 * style_points(decor)
+	return minf(bonus, 0.45)
 
 
 ## Tabelası olan dükkana müşteri daha sık gelir.

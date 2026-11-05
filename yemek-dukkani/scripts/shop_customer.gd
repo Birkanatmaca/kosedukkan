@@ -45,6 +45,8 @@ var food_patience := 0.0
 var max_food_patience := 1.0
 ## Kasadan ayrılırken sabrının ne kadarı kalmıştı (puana etki eder)
 var counter_wait_ratio := 1.0
+## Hangi kasanın sırasında: 0 oyuncunun kasası, 1 kasiyerin (Ek Kasa)
+var lane := 0
 ## Siparişini paket alıp masaya oturmadan çıkacak mı
 var takeaway := false
 ## { "pos": Vector3, "table": Dictionary }

@@ -171,6 +171,8 @@ func _show_detail(day: int) -> void:
 	_row("Bahşiş", int(record.get("tips", 0)), UiKit.GREEN)
 	if int(record.get("quests", 0)) > 0:
 		_row("Görev ödülleri", int(record.get("quests", 0)), UiKit.GREEN)
+	if int(record.get("gifts", 0)) > 0:
+		_row("Giriş serisi", int(record.get("gifts", 0)), UiKit.GREEN)
 	_row("Malzeme", -int(record.get("supplies", 0)), UiKit.RED)
 	_row("Geliştirme", -int(record.get("upgrades", 0)), UiKit.RED)
 	_row("Maaşlar", -int(record.get("wages", 0)), UiKit.RED)

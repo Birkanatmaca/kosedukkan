@@ -17,6 +17,8 @@ var enabled := true
 
 var _dirty := false
 var _timer := 0.0
+## Uygulamanın arka plana alındığı an (sen yokken kazancı için)
+var _background_at := 0.0
 
 
 func _ready() -> void:
@@ -44,6 +46,14 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		if _dirty:
 			save_game()
+		if what != NOTIFICATION_WM_CLOSE_REQUEST and _background_at == 0.0:
+			_background_at = Time.get_unix_time_from_system()
+	elif what == NOTIFICATION_APPLICATION_RESUMED or what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		# Arka plandan dönüş: aradaki sürede kasiyer ve aşçı çalıştı, gün değiştiyse seri işlenir.
+		if _background_at > 0.0:
+			var away := Time.get_unix_time_from_system() - _background_at
+			_background_at = 0.0
+			_after_away(away)
 
 
 func has_save() -> bool:
@@ -83,7 +93,20 @@ func load_game() -> bool:
 	# Gece (gün sonu özetinde) kapatıldıysa sabah yeni günle açılır.
 	if GameState.setup_done and not GameState.is_open:
 		GameState.start_day()
+	_after_away(Time.get_unix_time_from_system() - float(data.get("saved_at", Time.get_unix_time_from_system())))
 	return true
+
+
+## Oyuna dönünce: sen yokken satışları ve bugünün girişi işlenir, Hud pencereleri gösterir.
+func _after_away(seconds: float) -> void:
+	if not GameState.setup_done:
+		return
+	var report := Rewards.run_offline(seconds)
+	if not report.is_empty():
+		GameState.offline_report = report
+		_dirty = true
+	Rewards.check_login()
+	GameState.rewards_pending.emit()
 
 
 ## Kayıt verisini oyuna uygular (bulut kaydı yüklerken de kullanılır).

@@ -39,6 +39,8 @@ var _rating_btn: Button
 var _nav: Array[Button] = []
 var _panels: Array[Control] = []
 var _market_panel: PanelContainer
+## Siparişler panelinde "Kasam Açık / Kapalı" düğmesi (kasiyer varken)
+var _register_btn: Button
 var _cards := {}
 var _gauges: Array[CookGauge] = []
 var _toast: PanelContainer
@@ -79,6 +81,10 @@ var _top_bar: PanelContainer
 var _quest_btn: Button
 var _quests_ui: QuestsUI
 var _quest_btn_state := ""
+## Sağ üstteki kamera açısı düğmesi
+var _cam_btn: Button
+## Açık ödül penceresi (sen yokken / giriş serisi)
+var _reward_ui: RewardUI
 ## sipariş numarası -> teslim bekleyen müşterinin kartı
 var _pickup_cards := {}
 
@@ -116,6 +122,7 @@ func _ready() -> void:
 
 	_build_top_bar()
 	_build_quest_button()
+	_build_camera_button()
 	_panels = [_build_market_panel(), _build_shop_panel(), _build_kitchen_panel()]
 	_build_nav()
 	_nav_row.resized.connect(_layout_panels)
@@ -179,6 +186,9 @@ func _ready() -> void:
 	GameState.tutorial_changed.connect(_on_tutorial_changed)
 	GameState.day_ended.connect(_on_day_ended)
 	GameState.quests_changed.connect(_refresh_quest_button)
+	GameState.rewards_pending.connect(_show_rewards)
+	# Açılış ekranı kaybolunca bekleyen ödül pencereleri gösterilir.
+	get_tree().create_timer(1.6).timeout.connect(_show_rewards)
 	GameState.quest_completed.connect(_on_quest_completed)
 	GameState.day_started.connect(func(_d: int) -> void: _refresh_staff())
 	GameState.money_changed.connect(func(_v: int) -> void: _refresh_upgrades())
@@ -209,6 +219,7 @@ func _process(_delta: float) -> void:
 	_update_courier_cards(on_shop)
 	_update_phone_badge(on_shop)
 	_place_quest_button()
+	_place_camera_button()
 	var waiting := main.shop.waiting_count()
 
 	var cooked := false
@@ -400,18 +411,21 @@ func _build_market_panel() -> Control:
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 10)
 	box.add_child(tabs)
-	for i in 4:
+	# Beş sekme: ikon üstte, ad altta (dar ekrana sığsın)
+	for i in 5:
 		var tab := Button.new()
-		tab.text = ["Malzeme", "Menü", "Geliştir", "Personel"][i]
-		UiKit.set_icon(tab, ["package", "utensils", "circle-arrow-up", "users"][i], 24)
+		tab.text = ["Malzeme", "Menü", "Geliştir", "Personel", "Dekor"][i]
+		UiKit.set_icon(tab, ["package", "utensils", "circle-arrow-up", "users", "palette"][i], 26)
+		tab.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+		tab.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		tab.custom_minimum_size = Vector2(0, 64)
-		tab.add_theme_font_size_override("font_size", 20)
+		tab.custom_minimum_size = Vector2(0, 78)
+		tab.add_theme_font_size_override("font_size", 17)
 		tab.pressed.connect(_show_market_tab.bind(i))
 		tabs.add_child(tab)
 		_market_tabs.append(tab)
 
-	_market_pages = [_build_supplies_page(), _build_menu_page(), _build_upgrades_page(), _build_staff_page()]
+	_market_pages = [_build_supplies_page(), _build_menu_page(), _build_upgrades_page(), _build_staff_page(), DecorPage.new()]
 	GameState.market_changed.connect(_refresh_market)
 	GameState.stock_changed.connect(_refresh_market)
 	GameState.day_started.connect(func(_d: int) -> void: _refresh_market())
@@ -426,7 +440,7 @@ func _build_market_panel() -> Control:
 		var page := _market_pages[i]
 		page.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		if i < 2:
+		if i < 2 or i == 4:
 			var scroll := ScrollContainer.new()
 			scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 			scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -484,6 +498,16 @@ func _refresh_staff() -> void:
 		_staff_list.add_child(_muted_label("Kurye Seviye %d'de açılır: paket servis telefonu çalmaya başlar." % Staff.ROLES["kurye"]["unlock"]))
 	elif Staff.count(GameState.staff, "kurye") == 0:
 		_staff_list.add_child(_muted_label("Kurye alırsan kasadaki telefona paket siparişleri gelir."))
+	if GameState.level < int(Staff.ROLES["asci"]["unlock"]):
+		_staff_list.add_child(_muted_label("Aşçı Seviye %d'de açılır: siparişleri kendisi pişirir." % Staff.ROLES["asci"]["unlock"]))
+	elif Staff.count(GameState.staff, "asci") == 0:
+		_staff_list.add_child(_muted_label("Aşçı alırsan mutfakta siparişleri kendisi pişirip tepsiye koyar; sen de pişirebilirsin."))
+	if GameState.level < int(Staff.ROLES["kasiyer"]["unlock"]):
+		_staff_list.add_child(_muted_label("Kasiyer Seviye %d'de açılır: Ek Kasa'da sipariş alır." % Staff.ROLES["kasiyer"]["unlock"]))
+	elif GameState.upgrade_level("register2") == 0:
+		_staff_list.add_child(_muted_label("Kasiyer için önce Geliştir'den Ek Kasa al. Sıra ikiye bölünür: biri sende, biri kasiyerde."))
+	elif Staff.count(GameState.staff, "kasiyer") == 0:
+		_staff_list.add_child(_muted_label("Kasiyer alırsan sıra ikiye bölünür; istersen kendi kasanı kapatıp hepsini ona bırakırsın."))
 
 	_staff_list.add_child(_section_label("Bugünün adayları"))
 	if GameState.candidates.is_empty():
@@ -623,7 +647,7 @@ func _on_day_ended(stats: Dictionary) -> void:
 	title.add_theme_font_size_override("font_size", 44)
 	v.add_child(title)
 	var expenses: int = stats["supplies"] + stats["upgrades"] + stats["wages"]
-	var net: int = stats["revenue"] + stats["tips"] + int(stats.get("quests", 0)) - expenses
+	var net: int = stats["revenue"] + stats["tips"] + int(stats.get("quests", 0)) + int(stats.get("gifts", 0)) - expenses
 	var lines := [
 		["smile", "Servis edilen müşteri", "%d" % stats["served"], C_TEXT],
 		["angry", "Kaçan müşteri", "%d" % stats["lost"], UiKit.RED if stats["lost"] > 0 else C_TEXT],
@@ -1108,6 +1132,20 @@ func _build_shop_panel() -> Control:
 	var title := UiKit.label("Siparişler", 30, UiKit.TEXT, 900)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
+	# Kasiyer varken oyuncu kendi kasasını kapatıp açabilir.
+	_register_btn = Button.new()
+	_register_btn.custom_minimum_size = Vector2(0, 52)
+	_register_btn.add_theme_font_size_override("font_size", 17)
+	_register_btn.pressed.connect(func() -> void:
+		GameState.set_player_register_closed(not GameState.player_register_closed)
+		Sfx.play("tap")
+		Haptics.tap()
+	)
+	head.add_child(_register_btn)
+	GameState.register_mode_changed.connect(_refresh_register_btn)
+	GameState.staff_changed.connect(_refresh_register_btn)
+	GameState.upgrades_changed.connect(_refresh_register_btn)
+	_refresh_register_btn.call_deferred()
 	_sum_queue = _summary_chip(head, "users", UiKit.BLUE)
 	_sum_cooking = _summary_chip(head, "chef-hat", UiKit.ORANGE)
 	_sum_ready = _summary_chip(head, "check", UiKit.GREEN)
@@ -1116,6 +1154,14 @@ func _build_shop_panel() -> Control:
 	strip.shop = main.shop
 	box.add_child(strip)
 	return panel
+
+
+func _refresh_register_btn() -> void:
+	_register_btn.visible = main.shop.cashier_active()
+	var closed := GameState.player_register_closed
+	_register_btn.text = "Kasam Kapalı" if closed else "Kasam Açık"
+	UiKit.set_icon(_register_btn, "lock" if closed else "receipt", 22)
+	_style_button(_register_btn, C_LOCKED if closed else C_GREEN, C_TEXT if closed else Color.WHITE)
 
 
 func _build_kitchen_panel() -> Control:
@@ -1474,10 +1520,17 @@ func _add_card(customer: ShopCustomer) -> void:
 	box.add_child(bar)
 
 	var btn := Button.new()
-	btn.text = "Sipariş Al"
 	btn.add_theme_font_size_override("font_size", 22)
 	UiKit.set_icon(btn, "receipt", 26)
-	_style_button(btn, C_ORANGE, Color.WHITE)
+	if customer.lane == 1 and main.shop.cashier_active():
+		# Kasiyerin sırasındaki müşteri: siparişini kasiyer alır.
+		btn.text = "Kasiyer ilgileniyor"
+		btn.add_theme_font_size_override("font_size", 18)
+		btn.disabled = true
+		_style_button(btn, UiKit.BLUE, Color.WHITE)
+	else:
+		btn.text = "Sipariş Al"
+		_style_button(btn, C_ORANGE, Color.WHITE)
 	btn.pressed.connect(func() -> void: main.shop.request_order(customer))
 	box.add_child(btn)
 
@@ -1738,6 +1791,40 @@ func _place_quest_button() -> void:
 		_quest_btn.scale = Vector2.ONE
 
 
+func _build_camera_button() -> void:
+	_cam_btn = Button.new()
+	_cam_btn.add_theme_font_size_override("font_size", 21)
+	_cam_btn.custom_minimum_size = Vector2(0, 56)
+	UiKit.set_icon(_cam_btn, "camera", 26)
+	UiKit.candy(_cam_btn, UiKit.CARD, UiKit.TEXT)
+	_cam_btn.pressed.connect(func() -> void:
+		Sfx.play("tap")
+		Haptics.tap()
+		main.cycle_camera()
+	)
+	_root.add_child(_cam_btn)
+	main.camera_changed.connect(_refresh_camera_button)
+	main.kitchen_view_changed.connect(func(_v: String) -> void: _refresh_camera_button(main.camera_name()))
+	main.screen_changed.connect(func(_s: int) -> void: _refresh_camera_button(main.camera_name()))
+	_refresh_camera_button(main.camera_name())
+
+
+func _refresh_camera_button(view_name: String) -> void:
+	_cam_btn.text = view_name
+	_cam_btn.size = Vector2.ZERO
+
+
+## Kamera düğmesi üst barın altında, sağda durur (dükkanda ve mutfakta).
+func _place_camera_button() -> void:
+	var ringing: bool = not main.shop.call.is_empty() and not main.shop.call["open"]
+	_cam_btn.visible = GameState.setup_done and not GameState.tutorial_active() and not ringing \
+		and main.screen != Main.MARKET and not _order_entry.visible and not _payment.visible
+	if _cam_btn.visible:
+		_cam_btn.size = _cam_btn.get_combined_minimum_size()
+		_cam_btn.position = Vector2(_top_bar.position.x + _top_bar.size.x - _cam_btn.size.x,
+			_top_bar.position.y + _top_bar.size.y + 10)
+
+
 func _refresh_quest_button() -> void:
 	var ready := GameState.quests_ready_count()
 	var state := "ready" if ready > 0 else "idle"
@@ -1756,6 +1843,26 @@ func _on_quest_completed(quest: Dictionary) -> void:
 	Sfx.play("approve")
 	Haptics.success()
 	show_toast("Görev tamamlandı: %s\nÖdülünü Görevler'den al" % Quests.title(quest))
+
+
+## Sırayla: önce "sen yokken" raporu, sonra giriş serisi ödülü.
+func _show_rewards() -> void:
+	if (_reward_ui and is_instance_valid(_reward_ui)) or not GameState.setup_done or GameState.tutorial_active():
+		return
+	var popup := RewardUI.new()
+	if not GameState.offline_report.is_empty():
+		popup.kind = RewardUI.Kind.OFFLINE
+		popup.report = GameState.offline_report
+		GameState.offline_report = {}
+	elif Rewards.can_claim_streak():
+		popup.kind = RewardUI.Kind.STREAK
+	else:
+		popup.free()
+		return
+	_reward_ui = popup
+	popup.closed.connect(func() -> void: get_tree().create_timer(0.3).timeout.connect(_show_rewards))
+	_root.add_child(popup)
+	Sfx.play("approve")
 
 
 func open_quests() -> void:

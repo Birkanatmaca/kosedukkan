@@ -31,8 +31,15 @@ const RING_TIME := 14.0
 ## Açılan çağrıda karar süresi (saniye)
 const DECIDE_TIME := 15.0
 
-## Kasanın önündeki tek sipariş yeri (yazar kasanın tam karşısı)
-const SPOTS := [Vector3(0.6, 0, 0.2)]
+## Kasaların önündeki sipariş yerleri: 0 oyuncunun kasası, 1 Ek Kasa (kasiyer)
+const SPOTS := [Vector3(0.6, 0, 0.2), Vector3(1.55, 0, 0.2)]
+## Ek Kasa'nın sırası: masalara çarpmasın diye kısa (en fazla 3 kişi)
+const QUEUE2 := [Vector3(1.6, 0, -0.55), Vector3(1.6, 0, -1.3), Vector3(1.6, 0, -2.05)]
+## Kapıdan Ek Kasa sırasına giderken masaların arasından değil koridordan geçilir.
+const LANE2_APPROACH := Vector3(1.0, 0, -2.0)
+const REGISTER2_POS := Vector3(1.55, 0.98, 1.15)
+## Kasiyer tezgâhın arkasında, Ek Kasa'nın başında durur.
+const CASHIER_POS := Vector3(1.6, 0, 1.75)
 ## Sıra kasanın arkasında, koridor boyunca tek sıra halinde uzar.
 const QUEUE_START := Vector3(0.45, 0, -0.55)
 const DOOR := Vector3(0, 0, -9.9)
@@ -90,9 +97,16 @@ const PICKUP_WAIT := [
 const PACKAGE_SIGN := Vector3(-1.1, 0.98, 1.0)
 
 ## Kasanın önündeki yer (SPOTS ile aynı sırada; boşsa null)
-var spots: Array = [null]
+var spots: Array = [null, null]
 ## Kasanın arkasındaki sıra (önden arkaya)
 var queue: Array[ShopCustomer] = []
+## Ek Kasa'nın (kasiyerin) sırası
+var queue2: Array[ShopCustomer] = []
+var register2: CashRegister
+var _cashier: ModelBody
+var _cashier_busy: ShopCustomer
+var _cashier_timer := 0.0
+var _cashier_deliver_timer := 0.0
 ## Her masa: { "pos", "customer", "dirty", "tray", "cleaner", "mark" }. Bir masada tek müşteri oturur.
 var tables: Array[Dictionary] = []
 ## Masa ucunda ayakta bekleyenler (TABLES ile aynı sırada; boşsa null)
@@ -126,6 +140,13 @@ var _sign_board: MeshInstance3D
 var _sign_trim: MeshInstance3D
 var _sign_lamps: Array[Node3D] = []
 var _ceiling: MeshInstance3D
+var _ceiling_open := false
+## Dekor mağazası: kapı kanadı ve pencere / kapı çerçevesi rengi, halılar, süsler
+var _door_mat := StandardMaterial3D.new()
+var _frame_mat := StandardMaterial3D.new()
+var _rugs: Array[Node3D] = []
+var _ornaments := {}
+var _table_style := -1
 var _plants: Array[Node3D] = []
 var _lamps: Array[OmniLight3D] = []
 var _bulbs: Array[MeshInstance3D] = []
@@ -142,6 +163,8 @@ func _ready() -> void:
 	_apply_decor()
 	_sync_staff()
 	GameState.upgrades_changed.connect(_sync_tables)
+	GameState.upgrades_changed.connect(_sync_staff)
+	GameState.register_mode_changed.connect(_on_register_mode)
 	GameState.decor_changed.connect(_apply_decor)
 	GameState.setup_finished.connect(_apply_decor)
 	GameState.staff_changed.connect(_sync_staff)
@@ -164,9 +187,8 @@ func _process(delta: float) -> void:
 			if GameState.tutorial_step <= 8 and _customer_count() == 0 and GameState.accepting_customers():
 				_spawn()
 		elif GameState.accepting_customers() and _customer_count() < Progression.max_customers(GameState.level) and orders.size() < Progression.max_orders(GameState.level):
-			# Kasada boş yer varsa doğrudan oraya, yoksa sıra sınırına kadar sıraya.
-			var counter_free := spots.has(null) and queue.is_empty()
-			if counter_free or queue.size() < Progression.max_queue(GameState.level):
+			# Açık kasalardan birinde yer ya da sırada boşluk varsa yeni müşteri gelir.
+			if _pick_lane() != -1:
 				_spawn()
 
 	_update_standing()
@@ -176,20 +198,22 @@ func _process(delta: float) -> void:
 	if GameState.is_open and GameState.minutes >= GameState.CLOSE_TIME and _customer_count() == 0 and deliveries_done():
 		GameState.end_day()
 
-	# Kasada yer boşaldıysa sıradaki öne geçer.
-	var free := spots.find(null)
-	if free != -1 and not queue.is_empty():
-		var next: ShopCustomer = queue.pop_front()
-		spots[free] = next
-		next.state = ShopCustomer.State.ARRIVING
-		next.follow([QUEUE_START, SPOTS[free]], 0.0)
-		customer_added.emit(next)
-		_update_queue()
+	# Kasada yer boşaldıysa o kasanın sırasındaki ilk kişi öne geçer.
+	for lane in 2:
+		var lane_queue := _lane_queue(lane)
+		if spots[lane] == null and not lane_queue.is_empty():
+			var next: ShopCustomer = lane_queue.pop_front()
+			spots[lane] = next
+			next.state = ShopCustomer.State.ARRIVING
+			next.follow([QUEUE_START if lane == 0 else QUEUE2[0], SPOTS[lane]], 0.0)
+			customer_added.emit(next)
+			_update_queue()
+	_update_cashier(delta)
 
 	for customer in spots:
 		if customer and customer.state == ShopCustomer.State.WAITING and customer.patience <= 0.0:
 			_leave_angry(customer)
-	for customer in queue.duplicate():
+	for customer in queue + queue2:
 		if customer.patience <= 0.0:
 			_leave_angry(customer)
 	for order in orders.duplicate():
@@ -202,7 +226,7 @@ func _process(delta: float) -> void:
 
 ## Kasada ya da sırada sipariş vermeyi bekleyen müşteri sayısı.
 func waiting_count() -> int:
-	var count := queue.size()
+	var count := queue.size() + queue2.size()
 	for customer in spots:
 		if customer and customer.state == ShopCustomer.State.WAITING:
 			count += 1
@@ -221,6 +245,9 @@ func open_order_count() -> int:
 ## Müşteriye dokununca: kasadaysa siparişini al, teslim bekliyorsa ve hazırsa teslim et.
 func _on_customer_tapped(customer: ShopCustomer) -> void:
 	if customer.state == ShopCustomer.State.WAITING:
+		if customer.lane == 1 and cashier_active():
+			GameState.show_toast("%s ile kasiyer ilgileniyor" % customer.customer_name)
+			return
 		request_order(customer)
 	elif customer.state == ShopCustomer.State.ORDERED:
 		var order := order_of(customer)
@@ -274,7 +301,8 @@ func take_order(customer: ShopCustomer) -> bool:
 ## Kasa ödemeyi bitirince: müşteri sipariş numarasını alır, teslim alanına geçer,
 ## mutfakta fişi açılır. loss: fazladan verilen paraüstü.
 func complete_payment(customer: ShopCustomer, loss: int) -> void:
-	paying = null
+	if paying == customer:
+		paying = null
 	GameState.money += customer.sale_price - loss
 	if loss > 0:
 		GameState.show_toast("₺%d fazla paraüstü verdin!" % loss)
@@ -283,7 +311,7 @@ func complete_payment(customer: ShopCustomer, loss: int) -> void:
 	# Kasa "çın" dedikten sonra yazıcı siparişin fişini basar.
 	get_tree().create_timer(0.35).timeout.connect(Sfx.play.bind("receipt"))
 
-	var order := { "number": _next_number, "customer": customer, "items": customer.order.duplicate(), "filled": {}, "ready": false }
+	var order := { "number": _next_number, "customer": customer, "items": customer.order.duplicate(), "filled": {}, "ready": false, "lane": customer.lane }
 	_next_number += 1
 	for id in order["items"]:
 		order["filled"][id] = []
@@ -571,21 +599,123 @@ func _spawn() -> void:
 	customer.position = Vector3(from * STREET_END_X, 0, Street.SIDEWALK_Z)
 	customer.entry = [Vector3(from * 1.0, 0, Street.SIDEWALK_Z), Vector3(0, 0, -10.8), DOOR]
 
-	var free := spots.find(null)
-	if free != -1 and queue.is_empty():
-		spots[free] = customer
-		customer.follow([QUEUE_START, SPOTS[free]], 0.0)
+	var lane := maxi(_pick_lane(), 0)
+	customer.lane = lane
+	if spots[lane] == null and _lane_queue(lane).is_empty():
+		spots[lane] = customer
+		customer.follow([QUEUE_START, SPOTS[0]] if lane == 0 else [LANE2_APPROACH, QUEUE2[0], SPOTS[1]], 0.0)
 		customer_added.emit(customer)
 	else:
 		customer.state = ShopCustomer.State.QUEUED
-		queue.append(customer)
+		_lane_queue(lane).append(customer)
 		_update_queue()
 
 
-## Sıradakileri koridorda arka arkaya dizer.
+## Sıradakileri arka arkaya dizer: oyuncunun sırası koridorda, kasiyerin sırası
+## Ek Kasa'nın önünde (henüz koridordaysa önce koridordan gelir).
 func _update_queue() -> void:
 	for i in queue.size():
 		queue[i].follow([QUEUE_START + Vector3(0, 0, -QUEUE_SPACING * i)], 0.0)
+	for i in queue2.size():
+		var target: Vector3 = QUEUE2[mini(i, QUEUE2.size() - 1)]
+		var far := queue2[i].position.z < LANE2_APPROACH.z + 0.3
+		queue2[i].follow([LANE2_APPROACH, target] if far else [target], 0.0)
+
+
+## Oyuncu kasasını kapatınca sırasında bekleyenler kasiyerin sırasına geçer
+## (yer kaldıkça); kasanın önündeki müşteriyi yine oyuncu alabilir.
+func _on_register_mode() -> void:
+	if not GameState.player_register_closed or not cashier_active():
+		return
+	while not queue.is_empty() and queue2.size() + (0 if spots[1] == null else 1) < QUEUE2.size() + 1:
+		var customer: ShopCustomer = queue.pop_front()
+		customer.lane = 1
+		queue2.append(customer)
+	_update_queue()
+
+
+func _lane_queue(lane: int) -> Array[ShopCustomer]:
+	return queue if lane == 0 else queue2
+
+
+## Kasiyer çalışıyor mu (Ek Kasa alınmış ve kasiyer tutulmuş)
+func cashier_active() -> bool:
+	return register2 != null and Staff.count(GameState.staff, "kasiyer") > 0
+
+
+## Yeni müşterinin gideceği kasa: açık kasalardan en az kalabalık olanı; ikisi de
+## doluysa -1. Oyuncu kasasını kapattıysa sadece kasiyerin kasası açıktır.
+func _pick_lane() -> int:
+	var lanes: Array[int] = []
+	if not (GameState.player_register_closed and cashier_active()):
+		lanes.append(0)
+	if cashier_active():
+		lanes.append(1)
+	var best := -1
+	var best_load := 999
+	for lane in lanes:
+		var lane_queue := _lane_queue(lane)
+		var limit := Progression.max_queue(GameState.level) if lane == 0 else QUEUE2.size()
+		var has_room := (spots[lane] == null and lane_queue.is_empty()) or lane_queue.size() < limit
+		var load := lane_queue.size() + (0 if spots[lane] == null else 1)
+		if has_room and load < best_load:
+			best = lane
+			best_load = load
+	return best
+
+
+## Kasiyer: Ek Kasa'daki müşterinin siparişini alır, ödemesini alır (kendi hızında)
+## ve kendi aldığı hazır siparişleri teslim eder. Oyuncu kasasını kapattıysa bütün
+## hazır siparişleri o teslim eder.
+func _update_cashier(delta: float) -> void:
+	if not cashier_active():
+		_cashier_busy = null
+		return
+	var person: Dictionary = GameState.staff.filter(func(p: Dictionary) -> bool: return Staff.role(p) == "kasiyer")[0]
+	var customer: ShopCustomer = spots[1]
+	if _cashier_busy == null and customer and customer.state == ShopCustomer.State.WAITING and pickup_wait.has(null):
+		_cashier_busy = customer
+		_cashier_timer = Staff.work_time(person) * (1.0 + 0.25 * customer.item_count())
+		var price := 0
+		for id in customer.order:
+			price += Items.price(id) * int(customer.order[id])
+		register2.show_amount(price)
+		register2.card_wait()
+		if _cashier:
+			_cashier.play_action("wipe")
+	if _cashier_busy:
+		if not is_instance_valid(_cashier_busy) or _cashier_busy.state != ShopCustomer.State.WAITING:
+			_cashier_busy = null
+		else:
+			_cashier_timer -= delta
+			if _cashier_timer <= 0.0:
+				var done := _cashier_busy
+				_cashier_busy = null
+				_cashier_checkout(done)
+	_cashier_deliver_timer -= delta
+	if _cashier_deliver_timer <= 0.0:
+		_cashier_deliver_timer = Staff.work_time(person) * 0.6
+		for order in orders:
+			if order["ready"] and not order.get("delivery", false) \
+					and (order.get("lane", 0) == 1 or GameState.player_register_closed) \
+					and (order["customer"] as ShopCustomer).state == ShopCustomer.State.ORDERED:
+				deliver(order)
+				break
+
+
+func _cashier_checkout(customer: ShopCustomer) -> void:
+	var price := 0
+	for id in customer.order:
+		price += Items.price(id) * int(customer.order[id])
+	customer.sale_price = price
+	customer.counter_wait_ratio = customer.patience / customer.max_patience
+	customer.state = ShopCustomer.State.PAYING
+	register2.card_ok()
+	register2.show_thanks()
+	Sfx.play("beep", 0.05, Main.SHOP)
+	if _cashier:
+		_cashier.relax(0.0, false, false)
+	complete_payment(customer, 0)
 
 
 ## Temiz ve boş bir masa ayırır; yoksa false.
@@ -709,7 +839,7 @@ func _post_review(customer: ShopCustomer) -> void:
 
 
 func _leave_angry(customer: ShopCustomer) -> void:
-	var in_queue := queue.has(customer)
+	var in_queue := queue.has(customer) or queue2.has(customer)
 	var text := "Sıra çok uzundu, beklemekten vazgeçtim." if in_queue else "Çok bekledim, siparişim hiç alınmadı!"
 	GameState.add_review(1, text, customer.customer_name)
 	GameState.show_toast("%s beklemekten sıkılıp gitti!" % customer.customer_name)
@@ -718,6 +848,7 @@ func _leave_angry(customer: ShopCustomer) -> void:
 	customer.angry = true
 	if in_queue:
 		queue.erase(customer)
+		queue2.erase(customer)
 		_update_queue()
 	else:
 		_release_spot(customer)
@@ -823,7 +954,10 @@ func _sync_staff() -> void:
 			_fire_courier(courier)
 	if _package_point:
 		_package_point.visible = GameState.staff.any(func(p: Dictionary) -> bool: return Staff.role(p) == "kurye")
+	_sync_register2()
 	for person in GameState.staff:
+		if Staff.role(person) in ["asci", "kasiyer"]:
+			continue
 		if Staff.role(person) == "kurye":
 			if not couriers.any(func(c: Courier) -> bool: return is_same(c.data, person)):
 				var courier := Courier.new()
@@ -841,6 +975,39 @@ func _sync_staff() -> void:
 			add_child(worker)
 			worker.position = DOOR
 			_workers.append(worker)
+
+
+## Ek Kasa alınınca tezgâha ikinci kasa konur; kasiyer tutulunca başına geçer.
+func _sync_register2() -> void:
+	if register2 == null and GameState.upgrade_level("register2") > 0:
+		register2 = CashRegister.new()
+		register2.secondary = true
+		register2.position = REGISTER2_POS
+		register2.rotation_degrees.y = 6
+		add_child(register2)
+		register2.scale = Vector3.ONE * 0.01
+		register2.create_tween().tween_property(register2, "scale", Vector3.ONE, 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	var people := GameState.staff.filter(func(p: Dictionary) -> bool: return Staff.role(p) == "kasiyer")
+	if _cashier and (people.is_empty() or not is_same(_cashier.get_meta("data"), people[0])):
+		_cashier.queue_free()
+		_cashier = null
+	if _cashier == null and not people.is_empty() and register2:
+		var person: Dictionary = people[0]
+		if not person.has("look"):
+			person["look"] = CharacterSkin.look_to_save(CharacterSkin.random_look())
+		_cashier = ModelBody.new()
+		_cashier.set_meta("data", person)
+		add_child(_cashier)
+		_cashier.build_model(person.get("model", Staff.WORKER_MODELS["erkek"]), CharacterSkin.look_from_save(person["look"]))
+		var colors := uniform_colors()
+		_cashier.set_uniform(colors[0], colors[1])
+		_cashier.position = CASHIER_POS
+		_cashier.rotation.y = PI
+		var tag := Util.label3d("%s • Kasiyer" % person["name"], 40, Color.WHITE, Vector3(0, 2.05, 0))
+		tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		tag.outline_size = 10
+		tag.outline_modulate = Color(0.16, 0.11, 0.09)
+		_cashier.add_child(tag)
 
 
 # --- Paket servis ------------------------------------------------------------------
@@ -1182,6 +1349,8 @@ func _build_room() -> void:
 	# Plastik sandalye: hafif parlak
 	_chair_mat.roughness = 0.45
 	_floor_mat = Util.tile_material(Color.WHITE, Color.WHITE, 1.2)
+	_door_mat.roughness = 0.6
+	_frame_mat.roughness = 0.5
 	add_child(Util.box(Vector3(12, 0.1, 12.2), _floor_mat, Vector3(0, -0.05, -3.9)))
 	# Tavan: kurulumda salona yukarıdan bakılsın diye gizlidir.
 	# Tavan ve duvarlar güneşe gölge düşürmez; yoksa salonun tamamı gölgede
@@ -1249,6 +1418,8 @@ func _build_room() -> void:
 			_sconces.append(sconce)
 
 	_build_ruin()
+	_build_rugs()
+	_build_ornaments()
 
 	# Köşelerdeki bitkiler (kurulumda alınan kadarı görünür)
 	for pos in [Vector3(-5.4, 0, -1.2), Vector3(5.4, 0, -1.2), Vector3(-5.4, 0, -9.4), Vector3(5.4, 0, -9.4)]:
@@ -1371,8 +1542,24 @@ func _apply_decor() -> void:
 	_sign.visible = decor["sign"]
 	_layout_sign(Util.upper_tr(GameState.shop_name))
 	register.visible = decor["register"]
-	_ceiling.visible = GameState.setup_done
+	_door_mat.albedo_color = Decor.STYLES["door"]["options"][decor["door"]]["color"]
+	_frame_mat.albedo_color = Decor.STYLES["window"]["options"][decor["window_style"]]["color"]
+	for i in _rugs.size():
+		_rugs[i].visible = i == decor["rug"]
+	for id in _ornaments:
+		(_ornaments[id] as Node3D).visible = Decor.ornament_on(decor, id)
+	if _table_style != decor["table_style"]:
+		_table_style = decor["table_style"]
+		for table in tables:
+			_set_table_top(table)
+	_ceiling.visible = GameState.setup_done and not _ceiling_open
 	_sync_tables()
+
+
+## Kuşbakışı kamerada tavan kaldırılır.
+func set_ceiling_open(open: bool) -> void:
+	_ceiling_open = open
+	_ceiling.visible = GameState.setup_done and not open
 
 
 ## Boşluklu duvar: boşlukların etrafını kutularla doldurur.
@@ -1418,7 +1605,7 @@ func _window(pos: Vector3, size: Vector2, yaw: float) -> void:
 	root.position = pos
 	root.rotation_degrees.y = yaw
 	add_child(root)
-	var white := Color("#f7f4ee")
+	var white := _frame_mat
 	var t := 0.08
 	var depth := 0.26
 	# Pervaz (boşluğun dört kenarı)
@@ -1439,13 +1626,13 @@ func _window(pos: Vector3, size: Vector2, yaw: float) -> void:
 
 ## Camlı dükkan kapısı: sol kenarından menteşeli, müşteri yaklaşınca içeri açılır.
 func _build_door() -> void:
-	var wood := Color("#7a4b32")
+	var wood := _door_mat
 	var w := DOOR_WIDTH
 	var h := DOOR_HEIGHT
 	# Kasa
-	add_child(Util.box(Vector3(w + 0.16, 0.08, 0.26), Color("#f7f4ee"), Vector3(0, h + 0.04, -10.1)))
+	add_child(Util.box(Vector3(w + 0.16, 0.08, 0.26), _frame_mat, Vector3(0, h + 0.04, -10.1)))
 	for x in [-1.0, 1.0]:
-		add_child(Util.box(Vector3(0.08, h, 0.26), Color("#f7f4ee"), Vector3(x * (w + 0.08) / 2, h / 2, -10.1)))
+		add_child(Util.box(Vector3(0.08, h, 0.26), _frame_mat, Vector3(x * (w + 0.08) / 2, h / 2, -10.1)))
 	# Kanat: menteşe noktası etrafında döner
 	_door = Node3D.new()
 	_door.position = Vector3(-w / 2, 0, -10.1)
@@ -1509,9 +1696,6 @@ func _build_table(pos: Vector3) -> void:
 	root.position = pos
 	add_child(root)
 	# Tepsi ve iki müşteri sığsın diye masa üstü genişletilir, boyu aynı kalır.
-	var top := Util.model("furniture/masa")
-	top.scale = Vector3(1.35, 1.0, 1.35)
-	root.add_child(top)
 	# Masanın üstünde küçük bir vazo
 	root.add_child(Util.cylinder(0.05, 0.14, Color("#e8553e"), Vector3(0, 0.85, -0.35)))
 	root.add_child(Util.sphere(0.06, Color("#ffd166"), Vector3(0, 0.95, -0.35)))
@@ -1529,13 +1713,168 @@ func _build_table(pos: Vector3) -> void:
 	progress.outline_modulate = Color(0.16, 0.11, 0.09)
 	progress.visible = false
 	root.add_child(progress)
-	var table := { "pos": pos, "customer": null, "dirty": false, "tray": null, "cleaner": null, "mark": mark, "progress": progress, "root": root }
+	var table := { "pos": pos, "customer": null, "dirty": false, "tray": null, "cleaner": null, "mark": mark, "progress": progress, "root": root, "top": null }
+	_set_table_top(table)
 	var collider := Util.collider_box(root, Vector3(1.3, 1.0, 1.3), Vector3(0, 0.5, 0))
 	collider.set_meta("tap", _on_table_tapped.bind(table))
 	tables.append(table)
 	# Yeni masa yerine "pop" diye konur.
 	root.scale = Vector3.ONE * 0.01
 	root.create_tween().tween_property(root, "scale", Vector3.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+## Masanın tablası seçili masa çeşidine göre: Klasik model ya da ahşap kare,
+## mermer yuvarlak, retro kırmızı (üstü 0.78 m'de, tepsiler aynı yükseklikte durur).
+func _set_table_top(table: Dictionary) -> void:
+	if table["top"]:
+		(table["top"] as Node3D).queue_free()
+	var top := Node3D.new()
+	(table["root"] as Node3D).add_child(top)
+	table["top"] = top
+	var style: int = GameState.decor["table_style"]
+	var color: Color = Decor.STYLES["table"]["options"][style]["color"]
+	match style:
+		0:
+			var model := Util.model("furniture/masa")
+			model.scale = Vector3(1.35, 1.0, 1.35)
+			top.add_child(model)
+		1:
+			top.add_child(Util.box(Vector3(1.25, 0.07, 1.25), color, Vector3(0, 0.765, 0)))
+			top.add_child(Util.box(Vector3(1.29, 0.03, 1.29), color.darkened(0.25), Vector3(0, 0.72, 0)))
+			for x in [-0.52, 0.52]:
+				for z in [-0.52, 0.52]:
+					top.add_child(Util.box(Vector3(0.07, 0.72, 0.07), color.darkened(0.3), Vector3(x, 0.36, z)))
+		2:
+			top.add_child(Util.cylinder(0.68, 0.06, color, Vector3(0, 0.77, 0)))
+			top.add_child(Util.cylinder(0.05, 0.74, Color("#3a3d42"), Vector3(0, 0.37, 0)))
+			top.add_child(Util.cylinder(0.3, 0.04, Color("#3a3d42"), Vector3(0, 0.02, 0)))
+		3:
+			top.add_child(Util.cylinder(0.66, 0.06, color, Vector3(0, 0.77, 0)))
+			top.add_child(Util.cylinder(0.68, 0.03, Color("#d9dde2"), Vector3(0, 0.735, 0)))
+			top.add_child(Util.cylinder(0.045, 0.74, Color("#c9ced4"), Vector3(0, 0.37, 0)))
+			top.add_child(Util.cylinder(0.28, 0.03, Color("#c9ced4"), Vector3(0, 0.015, 0)))
+
+
+## Giriş halıları (Decor.STYLES["rug"]): 0 yok, 1 paspas, 2 kilim, 3 koridor yolluğu.
+func _build_rugs() -> void:
+	_rugs.append(Node3D.new())
+	add_child(_rugs[0])
+	# [merkez, boyut, zemin, kenar, iç desen]
+	var specs := [
+		[Vector3(0, 0, -9.45), Vector2(1.8, 1.0), Color("#3f7f5a"), Color("#2c5e41"), Color("#4f9a6c")],
+		[Vector3(0, 0, -8.7), Vector2(2.3, 2.5), Color("#b53a2c"), Color("#f1c27d"), Color("#2f4f7f")],
+		[Vector3(0, 0, -5.95), Vector2(1.3, 7.7), Color("#7a3b6a"), Color("#e8c06a"), Color("#5a2a4f")],
+	]
+	for spec in specs:
+		var rug := Node3D.new()
+		rug.position = spec[0]
+		var size: Vector2 = spec[1]
+		rug.add_child(Util.no_shadow(Util.box(Vector3(size.x, 0.02, size.y), spec[3], Vector3(0, 0.01, 0))))
+		rug.add_child(Util.no_shadow(Util.box(Vector3(size.x - 0.16, 0.02, size.y - 0.16), spec[2], Vector3(0, 0.014, 0))))
+		rug.add_child(Util.no_shadow(Util.box(Vector3(size.x - 0.42, 0.02, size.y - 0.42), spec[4], Vector3(0, 0.018, 0))))
+		# Ortada eşkenar dörtgen motifler
+		var motifs := maxi(1, int(size.y / 1.2))
+		for i in motifs:
+			var z := (i - (motifs - 1) / 2.0) * (size.y - 0.6) / maxf(motifs, 1.0)
+			var diamond := Util.no_shadow(Util.box(Vector3(0.32, 0.02, 0.32), spec[3], Vector3(0, 0.022, z)))
+			diamond.rotation_degrees.y = 45
+			rug.add_child(diamond)
+		rug.visible = false
+		add_child(rug)
+		_rugs.append(rug)
+
+
+## Süsler (Decor.ORNAMENTS); alınınca ve açıkken görünür.
+func _build_ornaments() -> void:
+	# Işık zinciri: vitrin duvarının üst kenarında sarkarak uzanan renkli ampuller
+	var lights := Node3D.new()
+	var colors := [Color("#ff6b6b"), Color("#ffd166"), Color("#06d6a0"), Color("#4cc9f0"), Color("#c77dff")]
+	for i in 37:
+		var x := -5.6 + i * (11.2 / 36.0)
+		var y := 4.3 - 0.14 * absf(sin(x / 1.4 * PI))
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = colors[i % colors.size()]
+		mat.emission_enabled = true
+		mat.emission = colors[i % colors.size()]
+		mat.emission_energy_multiplier = 1.6
+		lights.add_child(Util.no_shadow(Util.sphere(0.045, mat, Vector3(x, y, -9.95))))
+	_ornaments["lights"] = lights
+
+	# Vitrin çiçekleri: iki vitrinin önünde çiçekli kasa
+	var flowers := Node3D.new()
+	var petals := [Color("#ff7aa2"), Color("#ffd166"), Color("#ffffff"), Color("#c77dff"), Color("#ff9f43")]
+	for wx: float in BACK_WINDOW_X:
+		flowers.add_child(Util.box(Vector3(2.3, 0.2, 0.26), Color("#8a5a3a"), Vector3(wx, BACK_WINDOW_BOTTOM + 0.1, -9.8)))
+		for i in 11:
+			var fx := wx - 1.0 + i * 0.2
+			flowers.add_child(Util.no_shadow(Util.sphere(0.09, Color("#4f9a52"), Vector3(fx, BACK_WINDOW_BOTTOM + 0.24, -9.8))))
+			flowers.add_child(Util.no_shadow(Util.sphere(0.06, petals[i % petals.size()], Vector3(fx + 0.04, BACK_WINDOW_BOTTOM + 0.33, -9.76))))
+	_ornaments["flowers"] = flowers
+
+	# Duvar saati: sol duvarda, pencerenin üstünde
+	var clock := Node3D.new()
+	clock.position = Vector3(-5.86, 3.5, -3.0)
+	var rim := Util.cylinder(0.4, 0.07, Color("#3a2a20"))
+	rim.rotation_degrees.z = 90
+	clock.add_child(rim)
+	var face := Util.cylinder(0.34, 0.08, Color("#fbf6ec"))
+	face.rotation_degrees.z = 90
+	clock.add_child(face)
+	for i in 12:
+		var a := i * TAU / 12.0
+		clock.add_child(Util.box(Vector3(0.02, 0.05 if i % 3 else 0.08, 0.02), Color("#3a2a20"), Vector3(0.045, cos(a) * 0.28, sin(a) * 0.28)))
+	var hour := Util.box(Vector3(0.02, 0.18, 0.035), Color("#3a2a20"), Vector3(0.05, 0.07, 0.03))
+	hour.rotation_degrees.x = -40
+	clock.add_child(hour)
+	var minute := Util.box(Vector3(0.02, 0.26, 0.025), Color("#b53a2c"), Vector3(0.055, 0.1, -0.06))
+	minute.rotation_degrees.x = 35
+	clock.add_child(minute)
+	_ornaments["clock"] = clock
+
+	# Tablolar: sağ duvarda iki manzara
+	var frames := Node3D.new()
+	var scenes := [[Color("#8fc9f0"), Color("#5fa05a"), Color("#ffd166")], [Color("#f4b183"), Color("#2f6f8f"), Color("#fff1c4")]]
+	for i in 2:
+		var z: float = SIDE_WINDOW_Z[i]
+		var colors_i: Array = scenes[i]
+		frames.add_child(Util.box(Vector3(0.05, 0.8, 1.05), Color("#6b4428"), Vector3(5.87, 3.55, z)))
+		frames.add_child(Util.box(Vector3(0.02, 0.32, 0.9), colors_i[0], Vector3(5.84, 3.7, z)))
+		frames.add_child(Util.box(Vector3(0.02, 0.32, 0.9), colors_i[1], Vector3(5.84, 3.38, z)))
+		frames.add_child(Util.sphere(0.08, colors_i[2], Vector3(5.83, 3.75, z + 0.22)))
+	_ornaments["frames"] = frames
+
+	# Nazar boncuğu: kapının sağında ipte asılı
+	var nazar := Node3D.new()
+	nazar.position = Vector3(1.15, 2.2, -9.97)
+	nazar.add_child(Util.box(Vector3(0.012, 0.4, 0.012), Color("#c9a54a"), Vector3(0, 0.36, 0)))
+	var rings := [[0.17, Color("#1f4fa8")], [0.115, Color("#ffffff")], [0.075, Color("#5fb3f0")], [0.035, Color("#111111")]]
+	for i in rings.size():
+		var disc := Util.cylinder(rings[i][0], 0.02, rings[i][1], Vector3(0, 0, 0.012 * (i + 1)))
+		disc.rotation_degrees.x = 90
+		nazar.add_child(disc)
+	_ornaments["nazar"] = nazar
+
+	# Menü panosu: kapının solunda ayaklı kara tahta
+	var board := Node3D.new()
+	board.position = Vector3(-1.5, 0, -9.35)
+	board.rotation_degrees.y = 18
+	var slate := Node3D.new()
+	slate.rotation_degrees.x = -10
+	board.add_child(slate)
+	slate.add_child(Util.box(Vector3(0.78, 1.05, 0.05), Color("#8a5a3a"), Vector3(0, 0.6, 0)))
+	slate.add_child(Util.box(Vector3(0.66, 0.92, 0.05), Color("#2d3a32"), Vector3(0, 0.6, 0.012)))
+	var chalk := Util.label3d("GÜNÜN\nMENÜSÜ\n~\nLahmacun\nKöfte\nAyran", 40, Color("#f5f1e6"), Vector3(0, 0.62, 0.045))
+	chalk.pixel_size = 0.0035
+	chalk.line_spacing = -6.0
+	slate.add_child(chalk)
+	var leg := Util.box(Vector3(0.05, 1.1, 0.05), Color("#6b4428"), Vector3(0, 0.55, -0.32))
+	leg.rotation_degrees.x = 18
+	board.add_child(leg)
+	_ornaments["board"] = board
+
+	for id in _ornaments:
+		(_ornaments[id] as Node3D).visible = false
+		add_child(_ornaments[id])
 
 
 ## Sandalye modeli +Z'ye bakar; masaya dönsün diye çevrilir (sırtlık dışarıda).

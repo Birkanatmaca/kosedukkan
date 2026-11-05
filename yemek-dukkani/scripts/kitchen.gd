@@ -72,6 +72,11 @@ var _t := 0.0
 var _device_roots := {}
 ## Art arda tam kıvam yakalama sayısı (bonus büyür)
 var _streak := 0
+## Aşçı (Staff "asci"): tezgâhın arkasında durur, siparişleri kendisi pişirir.
+var _cook: ModelBody
+var _cook_timer := 0.0
+## Bugün "malzeme bitti" uyarısı verilen ürünler (aynı uyarı tekrarlanmasın)
+var _cook_warned := {}
 
 
 func _ready() -> void:
@@ -85,13 +90,17 @@ func _ready() -> void:
 	GameState.upgrades_changed.connect(_sync_upgrades)
 	GameState.menu_changed.connect(_sync_upgrades)
 	shop.orders_changed.connect(_sync_trays)
+	GameState.staff_changed.connect(_sync_cook)
+	GameState.day_started.connect(func(_d: int) -> void: _cook_warned.clear())
 	_refresh_pass()
 	_sync_trays()
+	_sync_cook()
 
 
 ## Kömürler nefes alır gibi parlar, közler tek tek yanıp söner, ışık titrer.
 func _process(delta: float) -> void:
 	_t += delta
+	_update_cook(delta)
 	# Dolu yer arttıkça ızgara daha çok cızırdar, fritöz daha çok fokurdar.
 	var grill := 0
 	var fryer := 0
@@ -115,6 +124,153 @@ func _process(delta: float) -> void:
 		var flame := _flames[i]
 		flame.scale.y = 1.7 + 0.45 * sin(_t * (6.0 + i * 1.7) + i)
 		flame.scale.x = 0.9 + 0.12 * sin(_t * (5.0 + i) + i * 2.0)
+
+
+# --- Aşçı ---------------------------------------------------------------------------
+
+## Aşçının durduğu yer: tezgâhın önü (kameraya sırtı dönük, cihazları örtmez);
+## boşken sağda bekler, çalışırken cihazın önüne kayar.
+const COOK_Z := 1.42
+const COOK_REST_X := 1.2
+## Aşçı ürünü bu kıvamda alır: çalışkan tam ortada, tembel biraz geç (fazla pişmiş olabilir).
+const COOK_AIM := [1.13, 1.04, 1.0]
+
+
+func _cook_data() -> Dictionary:
+	for person in GameState.staff:
+		if Staff.role(person) == "asci":
+			return person
+	return {}
+
+
+func _sync_cook() -> void:
+	var person := _cook_data()
+	if _cook and (person.is_empty() or not is_same(_cook.get_meta("data"), person)):
+		_cook.queue_free()
+		_cook = null
+	if _cook or person.is_empty():
+		return
+	if not person.has("look"):
+		person["look"] = CharacterSkin.look_to_save(CharacterSkin.random_look())
+	_cook = ModelBody.new()
+	_cook.set_meta("data", person)
+	add_child(_cook)
+	_cook.build_model(person.get("model", Staff.WORKER_MODELS["erkek"]), CharacterSkin.look_from_save(person["look"]))
+	# Beyaz aşçı önlüğü ve eldiveni
+	_cook.set_uniform(Color("#f7f7f2"), Color("#e6e6e0"))
+	_cook.scale = Vector3.ONE * 0.86
+	_cook.position = Vector3(COOK_REST_X, 0, COOK_Z)
+	_cook.rotation.y = PI
+	# Başında aşçı şapkası
+	var hat := Node3D.new()
+	hat.position = Vector3(0, _cook.head_top + 0.02, 0)
+	hat.add_child(Util.cylinder(0.11, 0.1, Color.WHITE, Vector3(0, 0.05, 0)))
+	hat.add_child(Util.sphere(0.12, Color.WHITE, Vector3(0, 0.15, 0)))
+	_cook.add_child(hat)
+	var tag := Util.label3d("%s • Aşçı" % person["name"], 26, Color.WHITE, Vector3(0, _cook.head_top + 0.4, 0))
+	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	tag.outline_size = 10
+	tag.outline_modulate = Color(0.16, 0.11, 0.09)
+	_cook.add_child(tag)
+
+
+## Aşçının sırası: önce kıvamı gelen ürünü alır, sonra siparişlerde eksik olanı
+## pişirmeye koyar, en son tamamlanabilen siparişi tepsiye koyar. Her iş kendi
+## hızında sürer; oyuncu da aynı anda pişirebilir.
+func _update_cook(delta: float) -> void:
+	if _cook == null or not GameState.is_open:
+		return
+	_cook_timer -= delta
+	if _cook_timer > 0.0:
+		return
+	var person := _cook_data()
+	_cook_timer = Staff.work_time(person)
+	# Tembel aşçı arada soluklanır.
+	if randf() < Staff.rest_chance(person) * 0.25:
+		_cook_timer *= 2.0
+		_cook.relax(0.0, false, false)
+		return
+	var aim: float = COOK_AIM[person["work"]]
+	for slot in slots:
+		if not slot.is_empty() and slot.doneness() >= aim:
+			_cook_take(slot)
+			return
+	var needs := _cook_needs()
+	for id in needs:
+		if needs[id] > 0 and _cook_start(id):
+			return
+	for order in shop.orders:
+		if not order["ready"] and _completable(order):
+			_cook_go(-1.2)
+			shop.fill_order(order)
+			return
+	_cook.relax(0.0, false, false)
+	_cook.position.x = move_toward(_cook.position.x, COOK_REST_X, 0.6)
+
+
+## Hazır siparişlerde eksik kalan, ne rafta ne ocakta olan yemekler: ürün -> adet
+func _cook_needs() -> Dictionary:
+	var needs := {}
+	for order in shop.orders:
+		if order["ready"]:
+			continue
+		for id in order["items"]:
+			if not Items.is_food(id):
+				continue
+			needs[id] = int(needs.get(id, 0)) + int(order["items"][id]) - (order["filled"][id] as Array).size()
+	for id in needs:
+		needs[id] -= GameState.available(id)
+		for slot in slots:
+			if slot.product == id and not slot.is_empty():
+				needs[id] -= 1
+	return needs
+
+
+func _completable(order: Dictionary) -> bool:
+	for id in order["items"]:
+		var missing := int(order["items"][id]) - (order["filled"][id] as Array).size()
+		if missing > GameState.available(id):
+			return false
+	return true
+
+
+func _cook_start(id: String) -> bool:
+	var device: String = Items.PRODUCTS[id]["device"]
+	for slot in slots:
+		if slot.device == device and slot.is_empty():
+			if GameState.stock[id] <= 0:
+				if not _cook_warned.has(id):
+					_cook_warned[id] = true
+					GameState.show_toast("Aşçı: %s malzemesi bitti! Marketten al" % Items.display_name(id))
+				return false
+			var item := GameState.take_stock_item(id)
+			slot.start(id, item == 1)
+			if device == "firin":
+				_peel_in(slot, id)
+			_cook_go(slot.global_position.x - global_position.x)
+			return true
+	return false
+
+
+func _cook_take(slot: CookSlot) -> void:
+	var id := slot.product
+	var quality := Items.quality_for(slot.doneness())
+	if slot.spoiled and quality > 0:
+		quality = 1
+	if slot.device == "firin":
+		_peel_out(slot, id, quality)
+	_cook_go(slot.global_position.x - global_position.x)
+	slot.clear()
+	Sfx.play("collect", 0.08, Main.KITCHEN)
+	if quality > 0:
+		GameState.add_prepared(id, quality)
+
+
+## Aşçı işin başına kayar (tezgâhın arkasında, sınırlar içinde) ve çalışır.
+func _cook_go(x: float) -> void:
+	var target := clampf(x, -1.3, 1.25)
+	_cook.create_tween().tween_property(_cook, "position:x", target, 0.3).set_trans(Tween.TRANS_SINE)
+	_cook.play_action("wipe")
 
 
 ## Cihazı kurar ve eklediği bütün parçaları tek bir düğümün altına toplar

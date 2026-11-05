@@ -55,6 +55,19 @@ var setup_done := false
 var decor := Decor.default_state()
 ## Tanıtım adımı; -1 ise tanıtım yok / bitti.
 var tutorial_step := -1
+## Giriş serisi (Rewards): art arda girilen gün sayısı, son giriş ve ödülün alındığı gün
+var login_streak := 0
+var last_login_day := ""
+var streak_claimed_day := ""
+## Sen yokken yapılan satışların raporu (Rewards.run_offline); Hud gösterince boşaltır.
+var offline_report := {}
+## Gösterilecek bir ödül penceresi var (sen yokken raporu ya da giriş serisi)
+signal rewards_pending
+
+## Oyuncu kendi kasasını kapattı mı (kasiyer varken bütün müşteriler ona gider).
+var player_register_closed := false
+signal register_mode_changed
+
 ## Oyuncunun menüsü: kurulumda seçilir, seviye atladıkça yemek eklenebilir.
 var menu: Array[String] = []
 
@@ -111,6 +124,37 @@ func set_floor(index: int) -> void:
 	money += old_price - new_price
 	decor["floor"] = index
 	decor_changed.emit()
+
+
+## Dekor mağazası: seçeneği seçer, sahip değilse satın alır. Döner: başarılı mı.
+func choose_decor(category: String, index: int) -> bool:
+	var cost := Decor.choose(decor, category, index, money)
+	if cost < 0:
+		return false
+	money -= cost
+	if setup_done:
+		day_stats["upgrades"] += cost
+	decor_changed.emit()
+	return true
+
+
+## Süs: alınmadıysa satın alır, alındıysa açıp kapatır. Döner: başarılı mı.
+func toggle_ornament(id: String) -> bool:
+	var owned: Array = decor["ornaments"]
+	var off: Array = decor["ornaments_off"]
+	if not owned.has(id):
+		var price: int = Decor.ORNAMENTS[id]["price"]
+		if money < price:
+			return false
+		money -= price
+		day_stats["upgrades"] += price
+		owned.append(id)
+	elif off.has(id):
+		off.erase(id)
+	else:
+		off.append(id)
+	decor_changed.emit()
+	return true
 
 
 ## Masa ya da bitki sayısını değiştirir (adet başı fiyat, iadeli).
@@ -199,6 +243,7 @@ func finish_setup() -> void:
 	setup_done = true
 	tutorial_step = 0
 	ensure_quests()
+	Rewards.check_login()
 	setup_finished.emit()
 	tutorial_changed.emit(tutorial_step)
 
@@ -224,6 +269,7 @@ func to_dict() -> Dictionary:
 		"batches": batches, "market": market, "price_factors": price_factors,
 		"menu": menu,
 		"quests": quests, "quests_day": quests_day, "quest_bonus_claimed": quest_bonus_claimed,
+		"login_streak": login_streak, "last_login_day": last_login_day, "streak_claimed_day": streak_claimed_day,
 	}
 
 
@@ -250,6 +296,7 @@ func from_dict(data: Dictionary) -> void:
 	for person in data.get("candidates", []):
 		candidates.append(_int_fields(person))
 	ensure_courier_candidates()
+	ensure_role_candidates()
 	shop_name = str(data.get("shop_name", shop_name))
 	setup_done = bool(data.get("setup_done", setup_done))
 	decor = _merge(Decor.default_state(), data.get("decor", {}), true)
@@ -287,6 +334,9 @@ func from_dict(data: Dictionary) -> void:
 		quests.append(quest)
 	quests_day = int(data.get("quests_day", 0))
 	quest_bonus_claimed = bool(data.get("quest_bonus_claimed", false))
+	login_streak = int(data.get("login_streak", 0))
+	last_login_day = str(data.get("last_login_day", ""))
+	streak_claimed_day = str(data.get("streak_claimed_day", ""))
 	ensure_quests()
 	# Tanıtım yarıda kaldıysa kapalı başlasın (oyun tanıtım modunda takılmasın).
 	tutorial_step = -1
@@ -316,8 +366,8 @@ func _int_fields(person: Dictionary) -> Dictionary:
 
 ## Geliştirme ve testler için: hazır döşenmiş dükkanla, tanıtımsız başlar.
 func quick_start() -> void:
-	decor = { "clean": true, "register": true, "paint": true, "windows": true, "lamps": true, "sign": true,
-		"paint_color": 0, "floor": 2, "tables": 4, "plants": 2 }
+	decor = _merge(Decor.default_state(), { "clean": true, "register": true, "paint": true, "windows": true, "lamps": true, "sign": true,
+		"paint_color": 0, "floor": 2, "tables": 4, "plants": 2 }, false)
 	setup_done = true
 	tutorial_step = -1
 	if menu.is_empty():
@@ -408,7 +458,7 @@ func _record_day(paid: Array[Dictionary], quitters: Array[String]) -> void:
 		"day": day, "date": Time.get_date_string_from_system(), "money": money,
 		"wages_paid": paid, "quitters": quitters,
 	}
-	for key in ["revenue", "tips", "quests", "supplies", "upgrades", "wages", "served", "lost"]:
+	for key in ["revenue", "tips", "quests", "gifts", "supplies", "upgrades", "wages", "served", "lost"]:
 		record[key] = int(day_stats.get(key, 0))
 	history.assign(history.filter(func(r: Dictionary) -> bool: return int(r["day"]) != day))
 	history.append(record)
@@ -416,7 +466,7 @@ func _record_day(paid: Array[Dictionary], quitters: Array[String]) -> void:
 
 ## Günün net kazancı: gelir + bahşiş + görev ödülü − malzeme − geliştirme − maaş.
 static func net_of(record: Dictionary) -> int:
-	return int(record.get("revenue", 0)) + int(record.get("tips", 0)) + int(record.get("quests", 0)) - int(record.get("supplies", 0)) 		- int(record.get("upgrades", 0)) - int(record.get("wages", 0))
+	return int(record.get("revenue", 0)) + int(record.get("tips", 0)) + int(record.get("quests", 0)) + int(record.get("gifts", 0)) - int(record.get("supplies", 0)) 		- int(record.get("upgrades", 0)) - int(record.get("wages", 0))
 
 
 func start_day() -> void:
@@ -537,6 +587,9 @@ func record_lost_customer() -> void:
 
 func hire(index: int) -> bool:
 	var job := Staff.role(candidates[index])
+	if job == "kasiyer" and upgrade_level("register2") == 0:
+		show_toast("Kasiyer için önce Geliştir'den Ek Kasa al")
+		return false
 	var limit: int = Staff.ROLES[job]["max"]
 	if Staff.count(staff, job) >= limit:
 		show_toast("En fazla %d %s alabilirsin" % [limit, Staff.ROLES[job]["name"].to_lower()])
@@ -549,7 +602,36 @@ func hire(index: int) -> bool:
 
 func fire(index: int) -> void:
 	staff.remove_at(index)
+	if Staff.count(staff, "kasiyer") == 0:
+		player_register_closed = false
 	staff_changed.emit()
+
+
+## Kendi kasanı kapat / aç: kapalıyken yeni müşteriler kasiyerin sırasına girer.
+func set_player_register_closed(closed: bool) -> void:
+	if closed and Staff.count(staff, "kasiyer") == 0:
+		show_toast("Kasanı kapatmak için önce kasiyer tut")
+		return
+	player_register_closed = closed
+	register_mode_changed.emit()
+
+
+## Seviyesi gelen ama adaylarda olmayan aşçı / kasiyer adayı eklenir (eski kayıtlar
+## ve gün ortasında seviye atlayınca yarını beklemesin).
+func ensure_role_candidates() -> void:
+	var added := false
+	for job in ["asci", "kasiyer"]:
+		if level < int(Staff.ROLES[job]["unlock"]) or Staff.count(staff, job) >= int(Staff.ROLES[job]["max"]):
+			continue
+		if candidates.any(func(p: Dictionary) -> bool: return Staff.role(p) == job):
+			continue
+		var taken: Array[Dictionary] = []
+		taken.append_array(staff)
+		taken.append_array(candidates)
+		candidates.append_array(Staff.make_people([job] as Array[String], taken))
+		added = true
+	if added:
+		staff_changed.emit()
 
 
 ## Pazarlık: kabul ederse maaş düşer; etmezse bir daha pazarlık yapılamaz.
@@ -564,7 +646,7 @@ func haggle(index: int) -> bool:
 
 
 func _reset_stats() -> void:
-	day_stats = { "revenue": 0, "tips": 0, "quests": 0, "supplies": 0, "upgrades": 0, "wages": 0, "served": 0, "lost": 0 }
+	day_stats = { "revenue": 0, "tips": 0, "quests": 0, "gifts": 0, "supplies": 0, "upgrades": 0, "wages": 0, "served": 0, "lost": 0 }
 
 
 func add_xp(amount: int) -> void:
@@ -574,6 +656,7 @@ func add_xp(amount: int) -> void:
 		level += 1
 		level_up.emit(level)
 		ensure_courier_candidates()
+		ensure_role_candidates()
 	xp_changed.emit()
 
 

@@ -22,6 +22,7 @@ const UPGRADES := {
 	"fryer_speed": { "name": "Güçlü Fritöz", "icon": "trending-up", "desc": "Fritöz %15 daha hızlı pişirir", "costs": [60, 140, 260], "levels": [3, 5, 8], "device": "fritoz" },
 	"tables": { "name": "Yeni Masalar", "icon": "armchair", "desc": "Salona +2 masa", "costs": [120], "levels": [3] },
 	"comfort": { "name": "Müzik ve Dekor", "icon": "music", "desc": "Müşteriler %12 daha sabırlı", "costs": [60, 130, 250], "levels": [2, 5, 8] },
+	"register2": { "name": "Ek Kasa", "icon": "receipt", "desc": "İkinci kasa: kasiyer tutunca sıra ikiye bölünür", "costs": [250], "levels": [3] },
 }
 
 const BASE_GRILL_SLOTS := 3
@@ -172,6 +173,7 @@ static func price_tolerance() -> float:
 		if GameState.decor.get(key, false):
 			decor += 1
 	decor += int(GameState.decor.get("plants", 0))
+	decor += Decor.style_points(GameState.decor)
 	return clampf(1.0 + 0.12 * (GameState.rating() - 3.5) + 0.015 * decor, 0.8, 1.5)
 
 

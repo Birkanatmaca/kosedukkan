@@ -409,8 +409,11 @@ func _count_row(id: String, icon: String, title: String, price: int, limit: int)
 
 ## Duvar rengi seçimi (boya alındıysa).
 func _paint_row() -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
+	# 8 renk: iki sıra halinde 4'er tane
+	var row := GridContainer.new()
+	row.columns = 4
+	row.add_theme_constant_override("h_separation", 10)
+	row.add_theme_constant_override("v_separation", 10)
 	for i in Decor.WALL_COLORS.size():
 		var btn := Button.new()
 		btn.text = Decor.WALL_COLORS[i]["name"]

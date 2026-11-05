@@ -3,13 +3,19 @@ extends RefCounted
 
 ## Personel adayları ve özellikleri. Hız ve çalışkanlık maaşı belirler:
 ## hızlı ve çalışkan olanlar pahalıdır, tembel olanlar molaya çıkar.
-## İki görev var: garson (masaları temizler) ve kurye (paket siparişleri götürür).
+## Görevler: garson (masaları temizler), kurye (paket siparişleri götürür),
+## aşçı (mutfakta siparişleri kendisi pişirip tepsiye koyar) ve kasiyer (Ek Kasa'da
+## sipariş ve ödeme alır, hazır siparişlerini teslim eder; sıra ikiye bölünür).
 
 ## Görevler: ad, en fazla kaç kişi, hangi seviyede açıldığı, taban maaş
 const ROLES := {
 	"garson": { "name": "Garson", "max": 2, "unlock": 1, "base": 35 },
 	"kurye": { "name": "Kurye", "max": 2, "unlock": 2, "base": 42 },
+	"asci": { "name": "Aşçı", "max": 1, "unlock": 2, "base": 52 },
+	"kasiyer": { "name": "Kasiyer", "max": 1, "unlock": 3, "base": 48 },
 }
+## Aşçı ve kasiyerin bir işi bitirme süresi (sn), hızına göre: yavaş, normal, hızlı
+const WORK_TIMES := [3.2, 2.3, 1.6]
 ## Kurye bir seferde en fazla bu kadar paket taşır.
 const COURIER_CAPACITY := 4
 const COURIER_MODELS := { "erkek": "kurye" }
@@ -76,6 +82,9 @@ static func make_candidates(count := 3, taken: Array[Dictionary] = [], level := 
 		jobs.append("garson")
 	if level >= int(ROLES["kurye"]["unlock"]):
 		jobs.append_array(["kurye", "kurye"])
+	for job in ["asci", "kasiyer"]:
+		if level >= int(ROLES[job]["unlock"]):
+			jobs.append(job)
 	return make_people(jobs, taken)
 
 
@@ -93,6 +102,11 @@ static func make_people(jobs: Array[String], taken: Array[Dictionary]) -> Array[
 
 static func traits(person: Dictionary) -> String:
 	return "%s • %s" % [SPEEDS[person["speed"]]["name"], WORK[person["work"]]["name"]]
+
+
+## Aşçının / kasiyerin bir işi (pişirme hamlesi, sipariş alma) bitirme süresi.
+static func work_time(person: Dictionary) -> float:
+	return WORK_TIMES[person["speed"]]
 
 
 static func haggle_offer(person: Dictionary) -> int:
