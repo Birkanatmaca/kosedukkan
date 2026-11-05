@@ -1,20 +1,14 @@
 class_name SettingsUI
 extends ColorRect
 
-## Ayarlar: hesap bağlama (Google / Apple), ses, dükkan bilgisi ve
-## ilerlemeyi sıfırlama. Üst bardaki dişli butonuyla açılır.
+## Ayarlar: hesap kartı (dokununca Hesap Ayarları: bağlama, ilerlemeyi sıfırlama,
+## hesabı silme), ses, titreşim ve dükkan bilgisi. Üst bardaki dişli butonuyla açılır.
 
 signal closed
 
 var _account_box: VBoxContainer
 var _sound_btn: Button
 var _haptics_btn: Button
-var _reset_btn: Button
-var _reset_armed := false
-## Gizli sıfırlama: dükkan kartına art arda bu kadar dokununca buton çıkar.
-const RESET_TAPS := 5
-var _taps := 0
-var _last_tap := 0.0
 
 
 func _ready() -> void:
@@ -55,8 +49,6 @@ func _ready() -> void:
 	v.add_child(UiKit.label("OYUN", 20, UiKit.MUTED, 900))
 	var info := PanelContainer.new()
 	info.add_theme_stylebox_override("panel", UiKit.card_style())
-	info.mouse_filter = Control.MOUSE_FILTER_STOP
-	info.gui_input.connect(_on_info_input)
 	v.add_child(info)
 	var info_row := HBoxContainer.new()
 	info_row.add_theme_constant_override("separation", 12)
@@ -101,15 +93,6 @@ func _ready() -> void:
 	)
 	v.add_child(sound_settings)
 
-	_reset_btn = Button.new()
-	_reset_btn.custom_minimum_size = Vector2(0, 76)
-	_reset_btn.add_theme_font_size_override("font_size", 24)
-	UiKit.set_icon(_reset_btn, "rotate-ccw", 30)
-	_reset_btn.pressed.connect(_on_reset)
-	_reset_btn.visible = false
-	v.add_child(_reset_btn)
-	_set_reset_armed(false)
-
 	modulate.a = 0.0
 	panel.pivot_offset = Vector2(320, 400)
 	panel.scale = Vector2(0.92, 0.92)
@@ -118,72 +101,47 @@ func _ready() -> void:
 	tween.tween_property(panel, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
+## Hesap kartı: durum ve "Hesap Ayarları" sayfasına giden ok.
 func _refresh_account() -> void:
 	for child in _account_box.get_children():
 		child.queue_free()
-
-	var card := PanelContainer.new()
-	card.add_theme_stylebox_override("panel", UiKit.card_style())
-	_account_box.add_child(card)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
-	card.add_child(row)
 	var linked := AccountLink.is_linked()
-	row.add_child(UiKit.badge_rect("cloud" if linked else "user", UiKit.GREEN if linked else UiKit.MUTED, 64))
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(0, 104)
+	UiKit.candy(btn, UiKit.CARD, UiKit.TEXT)
+	btn.pressed.connect(_open_account)
+	_account_box.add_child(btn)
+	var row := HBoxContainer.new()
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	row.offset_left = 16
+	row.offset_right = -16
+	row.add_theme_constant_override("separation", 12)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn.add_child(row)
+	var badge := UiKit.badge_rect("cloud" if linked else "user", UiKit.GREEN if linked else UiKit.MUTED, 64)
+	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(badge)
 	var text := VBoxContainer.new()
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	text.add_theme_constant_override("separation", 2)
+	text.alignment = BoxContainer.ALIGNMENT_CENTER
+	text.add_theme_constant_override("separation", 0)
+	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(text)
-	if linked:
-		var acc := AccountLink.account()
-		text.add_child(UiKit.label("%s hesabı bağlı" % AccountLink.provider_name(acc["provider"]), 26, UiKit.TEXT, 900))
-		text.add_child(_wrap(UiKit.label("%s • İlerlemen buluta kaydediliyor. Yeni telefonda aynı hesapla girince dükkanın geri gelir." % acc.get("name", ""), 20, UiKit.MUTED)))
-	else:
-		text.add_child(UiKit.label("Misafir oyuncu", 26, UiKit.TEXT, 900))
-		text.add_child(_wrap(UiKit.label("İlerlemen sadece bu telefonda. Hesabını bağla, telefon değişse de dükkanın kaybolmasın.", 20, UiKit.MUTED)))
-
-	if linked:
-		var unlink := Button.new()
-		unlink.text = "Bağlantıyı Kaldır"
-		unlink.custom_minimum_size = Vector2(0, 72)
-		UiKit.set_icon(unlink, "unlink", 28)
-		UiKit.candy(unlink, UiKit.NEUTRAL, UiKit.TEXT)
-		unlink.pressed.connect(func() -> void:
-			AccountLink.unlink()
-			_refresh_account()
-		)
-		_account_box.add_child(unlink)
-		return
-
-	# Google: beyaz buton; Apple: siyah buton (mağaza kılavuzlarındaki gibi).
-	_account_box.add_child(_provider_button("google", "Google ile Bağla", Color.WHITE, UiKit.TEXT))
-	_account_box.add_child(_provider_button("apple", "Apple ile Bağla", Color("#111111"), Color.WHITE))
+	text.add_child(UiKit.label("Hesap Ayarları", 26, UiKit.TEXT, 900))
+	var status := "%s hesabı bağlı" % AccountLink.provider_name(AccountLink.account()["provider"]) if linked else "Misafir • bağla, sıfırla, sil"
+	text.add_child(UiKit.label(status, 19, UiKit.MUTED))
+	var arrow := UiKit.icon_rect("chevron-right", UiKit.MUTED, 34)
+	arrow.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(arrow)
+	for child in text.get_children():
+		(child as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 
-func _provider_button(provider: String, text: String, bg: Color, fg: Color) -> Button:
-	var btn := Button.new()
-	btn.text = text
-	btn.custom_minimum_size = Vector2(0, 80)
-	btn.add_theme_font_size_override("font_size", 27)
-	UiKit.set_icon(btn, "log-in", 30)
-	UiKit.candy(btn, bg, fg)
-	if bg == Color.WHITE:
-		# Beyaz butonun kenarı belli olsun
-		for state in ["normal", "hover", "pressed", "hover_pressed"]:
-			var style := btn.get_theme_stylebox(state) as StyleBoxFlat
-			style.border_color = Color("#d9cfc6")
-			style.border_width_left = 2
-			style.border_width_right = 2
-			style.border_width_top = 2
-	btn.pressed.connect(func() -> void:
-		AccountLink.link(provider, func(ok: bool, message: String) -> void:
-			GameState.show_toast(message)
-			Sfx.play("approve" if ok else "error")
-			if ok:
-				_refresh_account()
-		)
-	)
-	return btn
+func _open_account() -> void:
+	Sfx.play("tap")
+	var page := AccountSettingsUI.new()
+	page.closed.connect(_refresh_account)
+	get_parent().add_child(page)
 
 
 func _refresh_sound() -> void:
@@ -198,38 +156,6 @@ func _refresh_haptics() -> void:
 	_haptics_btn.text = "Titreşim: Açık" if on else "Titreşim: Kapalı"
 	UiKit.set_icon(_haptics_btn, "vibrate" if on else "vibrate-off", 30)
 	UiKit.candy(_haptics_btn, UiKit.BLUE if on else UiKit.NEUTRAL, Color.WHITE if on else UiKit.TEXT)
-
-
-## Dükkan kartına hızlıca 5 kez dokununca gizli "İlerlemeyi Sıfırla" butonu belirir.
-func _on_info_input(event: InputEvent) -> void:
-	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
-		return
-	var now := Time.get_ticks_msec() / 1000.0
-	_taps = _taps + 1 if now - _last_tap < 0.6 else 1
-	_last_tap = now
-	if _taps >= RESET_TAPS and not _reset_btn.visible:
-		_reset_btn.visible = true
-		_reset_btn.modulate.a = 0.0
-		_reset_btn.create_tween().tween_property(_reset_btn, "modulate:a", 1.0, 0.25)
-		Sfx.play("pop")
-
-
-## Yanlışlıkla basılmasın: ilk basış onay ister, ikincisi sıfırlar.
-func _on_reset() -> void:
-	if not _reset_armed:
-		_set_reset_armed(true)
-		get_tree().create_timer(3.0).timeout.connect(func() -> void:
-			if is_instance_valid(self):
-				_set_reset_armed(false)
-		)
-		return
-	Saves.reset_progress()
-
-
-func _set_reset_armed(armed: bool) -> void:
-	_reset_armed = armed
-	_reset_btn.text = "Emin misin? Tekrar bas" if armed else "İlerlemeyi Sıfırla"
-	UiKit.candy(_reset_btn, UiKit.RED if armed else UiKit.NEUTRAL, Color.WHITE if armed else UiKit.RED)
 
 
 func _wrap(l: Label) -> Label:

@@ -72,6 +72,13 @@ static func link(provider: String, on_done: Callable) -> void:
 	native.call("sign_in")
 
 
+## Hesap silinirken buluttaki kaydı siler ve bağlantıyı kaldırır.
+static func delete_cloud() -> void:
+	if is_linked() and BACKEND_URL != "":
+		pass # Sunucu kurulduğunda: hesap kimliğiyle BACKEND_URL'deki kayıt silinir.
+	unlink()
+
+
 static func unlink() -> void:
 	Saves.set_setting("account", {})
 

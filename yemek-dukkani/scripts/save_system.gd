@@ -102,6 +102,20 @@ func reset_progress() -> void:
 	GameState.from_dict(_fresh_state())
 
 
+## Hesabı siler: bulut kaydı (bağlıysa), hesap bağlantısı, bütün ayarlar ve
+## ilerleme gider; oyun ilk kez açılmış gibi başlar.
+func delete_account() -> void:
+	AccountLink.delete_cloud()
+	settings = { "sound": true, "haptics": true, "account": {} }
+	if FileAccess.file_exists(SETTINGS_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SETTINGS_PATH))
+	AudioServer.set_bus_mute(0, false)
+	Sfx.set_category("music", true, 1.0)
+	settings.erase("audio")
+	_save_settings()
+	reset_progress()
+
+
 func _fresh_state() -> Dictionary:
 	return {
 		"money": Decor.START_BUDGET, "stock": { "tavuk": 3, "tavuk_sis": 3, "kofte": 3, "patates": 3, "kola": 5, "ayran": 0, "lahmacun": 0, "pizza": 0, "pide": 0 },
