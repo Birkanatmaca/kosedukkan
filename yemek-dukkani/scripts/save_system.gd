@@ -11,7 +11,7 @@ const VERSION := 1
 const AUTOSAVE_DELAY := 4.0
 
 ## Hesap ve ayarlar oyun kaydından ayrı tutulur (sıfırlamada hesap kalsın).
-var settings := { "sound": true, "account": {} }
+var settings := { "sound": true, "haptics": true, "account": {} }
 ## Testlerde (--script ile çalışırken) diske yazılmaz.
 var enabled := true
 

@@ -8,6 +8,7 @@ signal closed
 
 var _account_box: VBoxContainer
 var _sound_btn: Button
+var _haptics_btn: Button
 var _reset_btn: Button
 var _reset_armed := false
 ## Gizli sıfırlama: dükkan kartına art arda bu kadar dokununca buton çıkar.
@@ -75,6 +76,16 @@ func _ready() -> void:
 	)
 	v.add_child(_sound_btn)
 	_refresh_sound()
+
+	_haptics_btn = Button.new()
+	_haptics_btn.custom_minimum_size = Vector2(0, 76)
+	_haptics_btn.pressed.connect(func() -> void:
+		Saves.set_setting("haptics", not Saves.settings.get("haptics", true))
+		_refresh_haptics()
+		Haptics.success()
+	)
+	v.add_child(_haptics_btn)
+	_refresh_haptics()
 
 	# Ses Ayarları: müzik, kasa, mutfak, müşteriler... ayrı ayrı aç/kapa ve ses düzeyi
 	var sound_settings := Button.new()
@@ -180,6 +191,13 @@ func _refresh_sound() -> void:
 	_sound_btn.text = "Ses: Açık" if on else "Ses: Kapalı"
 	UiKit.set_icon(_sound_btn, "volume-2" if on else "volume-x", 30)
 	UiKit.candy(_sound_btn, UiKit.BLUE if on else UiKit.NEUTRAL, Color.WHITE if on else UiKit.TEXT)
+
+
+func _refresh_haptics() -> void:
+	var on: bool = Saves.settings.get("haptics", true)
+	_haptics_btn.text = "Titreşim: Açık" if on else "Titreşim: Kapalı"
+	UiKit.set_icon(_haptics_btn, "vibrate" if on else "vibrate-off", 30)
+	UiKit.candy(_haptics_btn, UiKit.BLUE if on else UiKit.NEUTRAL, Color.WHITE if on else UiKit.TEXT)
 
 
 ## Dükkan kartına hızlıca 5 kez dokununca gizli "İlerlemeyi Sıfırla" butonu belirir.

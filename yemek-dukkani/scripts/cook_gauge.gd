@@ -2,7 +2,8 @@ class_name CookGauge
 extends Control
 
 ## Pişen ürünün üstünde duran kıvam çubuğu: kırmızı çiğ, turuncu az / fazla,
-## yeşil tam kıvam, koyu yanık. Beyaz işaret o anki pişme oranını gösterir.
+## yeşil iyi kıvam, koyu yanık. Yeşilin ortasındaki parlak şerit "tam kıvam":
+## orada alınan ürün bonus kazandırır. Beyaz işaret o anki pişme oranını gösterir.
 
 const W := 88.0
 const H := 14.0
@@ -33,6 +34,10 @@ func _draw() -> void:
 		var x0: float = zone[0] / Items.MAX_DONENESS * W
 		var x1: float = zone[1] / Items.MAX_DONENESS * W
 		draw_rect(Rect2(x0, 0, x1 - x0, H), zone[2])
+	var b0 := (1.0 - Items.BULLSEYE) / Items.MAX_DONENESS * W
+	var b1 := (1.0 + Items.BULLSEYE) / Items.MAX_DONENESS * W
+	draw_rect(Rect2(b0, 0, b1 - b0, H), Color("#b8ff6a"))
+	draw_rect(Rect2(b0, 0, b1 - b0, H), Color.WHITE, false, 1.5)
 
 	var x := clampf(slot.doneness() / Items.MAX_DONENESS, 0.0, 1.0) * W
 	draw_rect(Rect2(x - 3, -6, 6, H + 12), Color.BLACK)
@@ -51,6 +56,8 @@ func _status() -> String:
 	var d := slot.doneness()
 	if d < Items.RAW_LIMIT:
 		return "Çiğ"
+	if Items.is_bullseye(d) and not slot.spoiled:
+		return "ŞİMDİ!"
 	match Items.quality_for(d):
 		2: return "Az"
 		5: return "Tamam!"

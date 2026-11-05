@@ -19,6 +19,12 @@ signal setup_finished
 signal tutorial_changed(step: int)
 ## Toptancı fiyatları değişti ya da satış fiyatı ayarlandı
 signal market_changed
+## Menüye ürün eklendi / menü seçildi
+signal menu_changed
+## Günlük görevlerde ilerleme oldu ya da ödül alındı
+signal quests_changed
+## Bir görev tamamlandı (ödülü alınmayı bekliyor)
+signal quest_completed(quest: Dictionary)
 
 const MAX_REVIEWS := 30
 ## Oyuncu isim vermezse dükkanın adı (oyunun adıyla aynı)
@@ -49,6 +55,21 @@ var setup_done := false
 var decor := Decor.default_state()
 ## Tanıtım adımı; -1 ise tanıtım yok / bitti.
 var tutorial_step := -1
+## Oyuncunun menüsü: kurulumda seçilir, seviye atladıkça yemek eklenebilir.
+var menu: Array[String] = []
+
+## Menü sisteminden önceki kayıtlar: ürünlerin açıldığı seviye (eski kayıt
+## yüklenirken menüsü bu seviyelere göre kurulur).
+const LEGACY_UNLOCK := { "tavuk": 1, "tavuk_sis": 1, "kofte": 1, "patates": 1, "kola": 1, "ayran": 2, "lahmacun": 3, "pizza": 4, "pide": 5 }
+## Kurulumda seçilen ürünlerden başlangıçta verilen stok
+const START_FOOD_STOCK := 3
+const START_DRINK_STOCK := 5
+## Günlük görevler (Quests): { kind, item, target, progress, claimed, money, xp }
+var quests: Array[Dictionary] = []
+## Görevlerin üretildiği gün; gün değişince yenileri çıkar.
+var quests_day := 0
+## Üç görevin sandık bonusu bugün alındı mı?
+var quest_bonus_claimed := false
 
 
 func set_shop_name(text: String) -> void:
@@ -107,11 +128,77 @@ func change_count(id: String, delta: int) -> void:
 	decor_changed.emit()
 
 
+## Kurulumda seçilen menü: stok sadece menüdeki ürünlere verilir.
+func set_starting_menu(ids: Array[String]) -> void:
+	menu = ids.duplicate()
+	for id in Items.PRODUCTS:
+		var amount := 0
+		if menu.has(id):
+			amount = START_FOOD_STOCK if Items.is_food(id) else START_DRINK_STOCK
+		stock[id] = amount
+		batches[id] = []
+	_ensure_market()
+	stock_changed.emit()
+	menu_changed.emit()
+
+
+## Menüdeki yemek / içecek sayısı (kind: "food" ya da "drink").
+func menu_count(kind: String) -> int:
+	return menu.filter(func(id: String) -> bool: return Items.is_food(id) == (kind == "food")).size()
+
+
+## Menüdeki ürünlerin cihazları.
+func menu_devices() -> Array[String]:
+	var list: Array[String] = []
+	for id in menu:
+		var device: String = Items.PRODUCTS[id]["device"]
+		if device != "" and not list.has(device):
+			list.append(device)
+	return list
+
+
+## Ürünü menüye eklemenin bedeli: yeni cihaz gerekiyorsa cihazın fiyatı.
+func menu_add_cost(id: String) -> int:
+	var device: String = Items.PRODUCTS[id]["device"]
+	if device == "" or menu_devices().has(device):
+		return 0
+	return Items.DEVICE_PRICES[device]
+
+
+## Menüde yer var mı?
+func menu_has_room(id: String) -> bool:
+	var kind := "food" if Items.is_food(id) else "drink"
+	return menu_count(kind) < Progression.menu_slots(kind, level)
+
+
+func add_to_menu(id: String) -> bool:
+	if menu.has(id) or not menu_has_room(id):
+		return false
+	var cost := menu_add_cost(id)
+	if money < cost:
+		return false
+	money -= cost
+	day_stats["upgrades"] += cost
+	menu.append(id)
+	menu_changed.emit()
+	return true
+
+
+## Tanıtımda pişirilecek ürün: menüdeki ilk ızgara ürünü, yoksa ilk yemek.
+func tutorial_food() -> String:
+	var foods := menu.filter(func(id: String) -> bool: return Items.is_food(id))
+	for id in foods:
+		if Items.PRODUCTS[id]["device"] == "izgara":
+			return id
+	return foods[0] if not foods.is_empty() else "kofte"
+
+
 func finish_setup() -> void:
 	if not Decor.missing(decor).is_empty():
 		return
 	setup_done = true
 	tutorial_step = 0
+	ensure_quests()
 	setup_finished.emit()
 	tutorial_changed.emit(tutorial_step)
 
@@ -135,6 +222,8 @@ func to_dict() -> Dictionary:
 		"shop_name": shop_name, "setup_done": setup_done, "decor": decor,
 		"tutorial_step": tutorial_step, "history": history,
 		"batches": batches, "market": market, "price_factors": price_factors,
+		"menu": menu,
+		"quests": quests, "quests_day": quests_day, "quest_bonus_claimed": quest_bonus_claimed,
 	}
 
 
@@ -176,6 +265,29 @@ func from_dict(data: Dictionary) -> void:
 	for id in data.get("price_factors", {}):
 		price_factors[id] = float(data["price_factors"][id])
 	_ensure_market()
+	menu.clear()
+	if data.has("menu"):
+		for id in data["menu"]:
+			if Items.PRODUCTS.has(id):
+				menu.append(id)
+	elif setup_done:
+		# Menü sisteminden önceki kayıt: seviyesine kadar açılmış ürünler menüde.
+		for id in LEGACY_UNLOCK:
+			if level >= LEGACY_UNLOCK[id]:
+				menu.append(id)
+	menu_changed.emit()
+	quests.clear()
+	for quest in data.get("quests", []):
+		if not Quests.KINDS.has(quest.get("kind", "")):
+			continue
+		for key in ["target", "progress", "money", "xp"]:
+			quest[key] = int(quest.get(key, 0))
+		quest["claimed"] = bool(quest.get("claimed", false))
+		quest["item"] = str(quest.get("item", ""))
+		quests.append(quest)
+	quests_day = int(data.get("quests_day", 0))
+	quest_bonus_claimed = bool(data.get("quest_bonus_claimed", false))
+	ensure_quests()
 	# Tanıtım yarıda kaldıysa kapalı başlasın (oyun tanıtım modunda takılmasın).
 	tutorial_step = -1
 
@@ -208,6 +320,9 @@ func quick_start() -> void:
 		"paint_color": 0, "floor": 2, "tables": 4, "plants": 2 }
 	setup_done = true
 	tutorial_step = -1
+	if menu.is_empty():
+		set_starting_menu(["kofte", "tavuk", "patates", "kola", "ayran"])
+	ensure_quests()
 	decor_changed.emit()
 	setup_finished.emit()
 
@@ -266,6 +381,8 @@ func end_day() -> void:
 	if not is_open:
 		return
 	is_open = false
+	# Görev ödülleri maaşlardan önce kasaya girer.
+	_auto_claim_quests()
 	var quitters: Array[String] = []
 	var paid: Array[Dictionary] = []
 	for person in staff.duplicate():
@@ -291,15 +408,15 @@ func _record_day(paid: Array[Dictionary], quitters: Array[String]) -> void:
 		"day": day, "date": Time.get_date_string_from_system(), "money": money,
 		"wages_paid": paid, "quitters": quitters,
 	}
-	for key in ["revenue", "tips", "supplies", "upgrades", "wages", "served", "lost"]:
+	for key in ["revenue", "tips", "quests", "supplies", "upgrades", "wages", "served", "lost"]:
 		record[key] = int(day_stats.get(key, 0))
 	history.assign(history.filter(func(r: Dictionary) -> bool: return int(r["day"]) != day))
 	history.append(record)
 
 
-## Günün net kazancı: gelir + bahşiş − malzeme − geliştirme − maaş.
+## Günün net kazancı: gelir + bahşiş + görev ödülü − malzeme − geliştirme − maaş.
 static func net_of(record: Dictionary) -> int:
-	return int(record.get("revenue", 0)) + int(record.get("tips", 0)) - int(record.get("supplies", 0)) 		- int(record.get("upgrades", 0)) - int(record.get("wages", 0))
+	return int(record.get("revenue", 0)) + int(record.get("tips", 0)) + int(record.get("quests", 0)) - int(record.get("supplies", 0)) 		- int(record.get("upgrades", 0)) - int(record.get("wages", 0))
 
 
 func start_day() -> void:
@@ -309,6 +426,7 @@ func start_day() -> void:
 	candidates = Staff.make_candidates(3, staff, level)
 	_reset_stats()
 	tick_market()
+	ensure_quests()
 	staff_changed.emit()
 	day_started.emit(day)
 	var spoiled := 0
@@ -319,13 +437,92 @@ func start_day() -> void:
 
 
 func record_sale(amount: int, tip: int) -> void:
+	Haptics.light()
 	day_stats["revenue"] += amount
 	day_stats["tips"] += tip
 	day_stats["served"] += 1
+	quest_event("revenue", amount)
+	if tip > 0:
+		quest_event("tips", tip)
 
 
 func record_tip(tip: int) -> void:
 	day_stats["tips"] += tip
+	quest_event("tips", tip)
+
+
+# --- Günlük görevler -----------------------------------------------------------
+
+## Bugünün görevleri yoksa üretir (kurulum bitmeden görev çıkmaz).
+func ensure_quests() -> void:
+	if not setup_done or (quests_day == day and not quests.is_empty()):
+		return
+	var has_courier := Staff.count(staff, "kurye") > 0
+	quests = Quests.generate(day, level, menu, has_courier, shop_name)
+	quests_day = day
+	quest_bonus_claimed = false
+	quests_changed.emit()
+
+
+## Oyunda bir şey oldu (kind: serve, revenue, tips, five_star, sell, clean,
+## delivery, bullseye, streak). amount: adet ya da tutar, item: satılan ürün.
+func quest_event(kind: String, amount := 1, item := "") -> void:
+	if not setup_done or not is_open:
+		return
+	var changed := false
+	for quest in quests:
+		var before := int(quest["progress"])
+		if Quests.apply(quest, kind, amount, item):
+			quest_completed.emit(quest)
+		changed = changed or int(quest["progress"]) != before
+	if changed:
+		quests_changed.emit()
+
+
+func quests_ready_count() -> int:
+	return quests.filter(func(q: Dictionary) -> bool: return Quests.done(q) and not q["claimed"]).size()
+
+
+func quests_done_count() -> int:
+	return quests.filter(func(q: Dictionary) -> bool: return Quests.done(q)).size()
+
+
+## Görevin ödülünü verir; üç görev de alındıysa sandık bonusunu da verir.
+## Döner: verilen toplam { money, xp, bonus }.
+func claim_quest(index: int) -> Dictionary:
+	if index < 0 or index >= quests.size():
+		return {}
+	var quest := quests[index]
+	if quest["claimed"] or not Quests.done(quest):
+		return {}
+	quest["claimed"] = true
+	var reward := { "money": int(quest["money"]), "xp": int(quest["xp"]), "bonus": false }
+	if not quest_bonus_claimed and quests.all(func(q: Dictionary) -> bool: return q["claimed"]):
+		quest_bonus_claimed = true
+		var extra := Quests.bonus(level)
+		reward["money"] += extra["money"]
+		reward["xp"] += extra["xp"]
+		reward["bonus"] = true
+	_pay_quest(reward)
+	quests_changed.emit()
+	return reward
+
+
+## Gün biterken tamamlanmış ama alınmamış görevlerin ödülü kasaya girer.
+func _auto_claim_quests() -> void:
+	var total := { "money": 0, "xp": 0 }
+	for i in quests.size():
+		var reward := claim_quest(i)
+		if not reward.is_empty():
+			total["money"] += reward["money"]
+			total["xp"] += reward["xp"]
+	day_stats["quest_auto"] = total["money"]
+
+
+func _pay_quest(reward: Dictionary) -> void:
+	money += reward["money"]
+	day_stats["quests"] = int(day_stats.get("quests", 0)) + reward["money"]
+	add_xp(reward["xp"])
 
 
 ## Masa bulamayan ya da siparişi gecikene para iadesi: satış geri alınır.
@@ -367,7 +564,7 @@ func haggle(index: int) -> bool:
 
 
 func _reset_stats() -> void:
-	day_stats = { "revenue": 0, "tips": 0, "supplies": 0, "upgrades": 0, "wages": 0, "served": 0, "lost": 0 }
+	day_stats = { "revenue": 0, "tips": 0, "quests": 0, "supplies": 0, "upgrades": 0, "wages": 0, "served": 0, "lost": 0 }
 
 
 func add_xp(amount: int) -> void:
@@ -539,6 +736,8 @@ func take_for_order(id: String) -> int:
 
 
 func add_review(stars: int, text: String, customer_name: String) -> void:
+	if stars == 5:
+		quest_event("five_star")
 	reviews.push_front({ "stars": stars, "text": text, "name": customer_name })
 	if reviews.size() > MAX_REVIEWS:
 		reviews.pop_back()

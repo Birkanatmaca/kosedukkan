@@ -69,7 +69,14 @@ func clear() -> void:
 func _process(delta: float) -> void:
 	if is_empty():
 		return
+	var before := doneness()
 	elapsed = minf(elapsed + delta, cook_time * Items.MAX_DONENESS)
+	# Kıvam yeşile girince hafif, yanmaya başlayınca sert titreşim
+	var now := doneness()
+	if before < Items.UNDER_LIMIT and now >= Items.UNDER_LIMIT:
+		Haptics.light()
+	elif before < Items.BURNT_LIMIT and now >= Items.BURNT_LIMIT:
+		Haptics.warning()
 	_update_look()
 
 

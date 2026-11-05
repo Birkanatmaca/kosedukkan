@@ -1,8 +1,8 @@
 class_name SetupUI
 extends Control
 
-## Başlangıç: önce dükkan adı sorulur, sonra harabe dükkan verilen bütçeyle
-## döşenir. Alınan her şey salonda anında görünür; alınana tekrar dokununca
+## Başlangıç: önce dükkan adı sorulur, sonra menü seçilir (yemekler ve
+## içecekler kartlardan), ardından harabe dükkan verilen bütçeyle döşenir. Alınan her şey salonda anında görünür; alınana tekrar dokununca
 ## iade edilir. Zorunlular tamamlanınca "Dükkanı Aç" ile oyun başlar.
 
 const C_TEXT := UiKit.TEXT
@@ -18,6 +18,11 @@ var _toggle_buttons := {}
 var _count_labels := {}
 var _swatches: Array[Button] = []
 var _floor_buttons: Array[Button] = []
+## Menü seçimi: seçili ürünler ve kartları
+var _picked: Array[String] = []
+var _pick_cards := {}
+var _pick_counts := {}
+var _pick_go: Button
 
 
 func _ready() -> void:
@@ -88,9 +93,164 @@ func _build_name_dialog() -> void:
 		GameState.set_shop_name(edit.text)
 		Sfx.play("approve")
 		overlay.queue_free()
-		_show_sheet()
+		_build_menu_picker()
 	go.pressed.connect(confirm)
 	edit.text_submitted.connect(func(_t: String) -> void: confirm.call())
+
+
+# --- Menü seçimi ------------------------------------------------------------------
+
+func _build_menu_picker() -> void:
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.08, 0.05, 0.03, 0.65)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(overlay)
+	var panel := PanelContainer.new()
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	panel.offset_left = 16
+	panel.offset_right = -16
+	panel.offset_top = 40
+	panel.offset_bottom = -24
+	overlay.add_child(panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 12)
+	panel.add_child(v)
+
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 10)
+	v.add_child(head)
+	head.add_child(UiKit.badge_rect("utensils", UiKit.ORANGE, 52))
+	head.add_child(UiKit.label("Menünü Seç", 34, C_TEXT, 900))
+	var desc := UiKit.label("Ne satacağına sen karar ver. Seçtiğin yemeklerin cihazları mutfağa kurulur. Seviye atladıkça menüne yeni yemek ekleyebilirsin.", 20, C_MUTED)
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(desc)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 10)
+	scroll.add_child(list)
+	for kind in ["food", "drink"]:
+		var section := HBoxContainer.new()
+		list.add_child(section)
+		var name_l := _section("Yemekler" if kind == "food" else "İçecekler")
+		name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		section.add_child(name_l)
+		var count := UiKit.label("", 22, C_TEXT, 900)
+		section.add_child(count)
+		_pick_counts[kind] = count
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 10)
+		grid.add_theme_constant_override("v_separation", 10)
+		list.add_child(grid)
+		for id in Items.PRODUCTS:
+			if Items.is_food(id) == (kind == "food"):
+				grid.add_child(_pick_card(id))
+
+	_pick_go = Button.new()
+	_pick_go.custom_minimum_size = Vector2(0, 92)
+	_pick_go.add_theme_font_size_override("font_size", 30)
+	_pick_go.pressed.connect(func() -> void:
+		if not _menu_valid():
+			return
+		GameState.set_starting_menu(_picked)
+		Sfx.play("approve")
+		overlay.queue_free()
+		_show_sheet()
+	)
+	v.add_child(_pick_go)
+	# Başlangıç önerisi: köfte, patates, kola (oyuncu değiştirebilir)
+	_picked = ["kofte", "patates", "kola"]
+	_refresh_picker()
+
+
+## Ürün kartı: resim, ad, cihaz, pişme süresi ve fiyat. Dokununca seçilir / bırakılır.
+func _pick_card(id: String) -> Control:
+	var data: Dictionary = Items.PRODUCTS[id]
+	var btn := Button.new()
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn.custom_minimum_size = Vector2(0, 116)
+	var h := HBoxContainer.new()
+	h.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	h.offset_left = 12
+	h.offset_right = -12
+	h.add_theme_constant_override("separation", 10)
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn.add_child(h)
+	var pic := UiKit.food_rect(id, 72)
+	pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(pic)
+	var info := VBoxContainer.new()
+	info.alignment = BoxContainer.ALIGNMENT_CENTER
+	info.add_theme_constant_override("separation", 0)
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(info)
+	info.add_child(UiKit.label(Items.display_name(id), 23, C_TEXT, 900))
+	var device: String = data["device"]
+	var detail := "₺%d" % data["price"]
+	if device != "":
+		detail = "%s • %d sn • %s" % [Items.DEVICES[device], roundi(data["cook_time"]), detail]
+	info.add_child(UiKit.label(detail, 17, C_MUTED))
+	var check := UiKit.icon_rect("check", C_GREEN, 38)
+	check.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(check)
+	for child in info.get_children():
+		(child as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn.pressed.connect(_toggle_pick.bind(id))
+	_pick_cards[id] = { "button": btn, "check": check }
+	return btn
+
+
+func _toggle_pick(id: String) -> void:
+	var kind := "food" if Items.is_food(id) else "drink"
+	if _picked.has(id):
+		_picked.erase(id)
+		Sfx.play("pop")
+	elif _picked_count(kind) >= Progression.menu_slots(kind, 1):
+		GameState.show_toast("En fazla %d %s seçebilirsin" % [Progression.menu_slots(kind, 1), "yemek" if kind == "food" else "içecek"])
+		Sfx.play("error")
+		return
+	else:
+		_picked.append(id)
+		Sfx.play("pop")
+		Haptics.tap()
+	_refresh_picker()
+
+
+func _picked_count(kind: String) -> int:
+	return _picked.filter(func(id: String) -> bool: return Items.is_food(id) == (kind == "food")).size()
+
+
+func _menu_valid() -> bool:
+	return _picked_count("food") >= Progression.MENU_MIN_FOOD and _picked_count("drink") >= Progression.MENU_MIN_DRINK
+
+
+func _refresh_picker() -> void:
+	for id in _pick_cards:
+		var on := _picked.has(id)
+		var refs: Dictionary = _pick_cards[id]
+		_style(refs["button"], Color("#ffd9b8") if on else C_CREAM, C_TEXT, 5 if on else 0)
+		(refs["check"] as Control).modulate.a = 1.0 if on else 0.0
+	for kind in _pick_counts:
+		var n := _picked_count(kind)
+		var low: int = Progression.MENU_MIN_FOOD if kind == "food" else Progression.MENU_MIN_DRINK
+		var label: Label = _pick_counts[kind]
+		label.text = "%d / %d" % [n, Progression.menu_slots(kind, 1)]
+		label.add_theme_color_override("font_color", C_GREEN if n >= low else Color("#e05555"))
+	var ok := _menu_valid()
+	_pick_go.disabled = not ok
+	if ok:
+		_pick_go.text = "Menüyü Onayla"
+		UiKit.set_icon(_pick_go, "arrow-right", 34)
+	else:
+		_pick_go.text = "En az %d yemek, %d içecek seç" % [Progression.MENU_MIN_FOOD, Progression.MENU_MIN_DRINK]
+		_pick_go.icon = null
+	_style(_pick_go, C_ORANGE if ok else Color("#cfc6c0"), Color.WHITE, 0)
 
 
 # --- Kurulum paneli ---------------------------------------------------------------

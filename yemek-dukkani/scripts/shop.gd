@@ -395,6 +395,9 @@ func deliver(order: Dictionary) -> void:
 	elif price_ratio < 0.8:
 		review += " Bu fiyata harika!"
 	customer.pending_review = [stars, review]
+	GameState.quest_event("serve")
+	for item in served:
+		GameState.quest_event("sell", 1, item[0])
 
 	orders.erase(order)
 	pickup_wait[pickup_wait.find(customer)] = null
@@ -554,8 +557,8 @@ func _spawn() -> void:
 	customer.max_patience = Progression.patience(GameState.level, customer.item_count(), GameState.upgrade_level("comfort"))
 	customer.max_patience *= 1.0 + Decor.patience_bonus(GameState.decor)
 	if GameState.tutorial_active():
-		# Tanıtım müşterisi tek köfte ister ve sabrı tükenmez.
-		customer.order = { "kofte": 1 }
+		# Tanıtım müşterisi menüdeki tek bir ürünü ister ve sabrı tükenmez.
+		customer.order = { GameState.tutorial_food(): 1 }
 		customer.max_patience = 9999.0
 	customer.tap = _on_customer_tapped.bind(customer)
 	customer.sat_down.connect(_on_sat_down)
@@ -793,6 +796,7 @@ func _on_table_tapped(table: Dictionary) -> void:
 		(table["tray"] as Node3D).queue_free()
 		table["tray"] = null
 	_clean_table(table)
+	GameState.quest_event("clean")
 
 
 func _clean_table(table: Dictionary) -> void:
@@ -1104,6 +1108,10 @@ func complete_deliveries(courier: Courier, delivered: Array[Dictionary]) -> void
 		total += int(order["price"])
 		tips += tip
 		GameState.record_sale(order["price"], tip)
+		GameState.quest_event("serve")
+		GameState.quest_event("delivery")
+		for id in order["filled"]:
+			GameState.quest_event("sell", (order["filled"][id] as Array).size(), id)
 		GameState.add_review(stars, review, order["name"])
 		GameState.add_xp(Progression.sale_xp(count, stars))
 	GameState.money += total + tips

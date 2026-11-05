@@ -3,6 +3,7 @@ extends Control
 
 ## İlk müşteride adım adım anlatan "Usta". Her adım oyuncu o işi yapınca
 ## kendiliğinden ilerler; gidilecek buton nabız gibi parlar. "Geç" ile atlanır.
+## {urun} ve {cihaz}: tanıtımda pişirilen ürün (menüdeki ilk ızgara ürünü) ve cihazı.
 
 const C_MUTED := Color("#8a7a72")
 const STEPS := [
@@ -10,9 +11,9 @@ const STEPS := [
 	"Müşteri kasada. 'Sipariş Al'a bas, kasada balondaki istediklerini menüden seç ve 'Ödeme Al'a bas.",
 	"Ödemeyi al: kartla öderse 'Kartı Okut'a bas, nakit verirse çekmeceden paraüstünü seçip ver.",
 	"Sipariş alındı! Müşteri numarasıyla bekliyor. Hazırlamak için alttan Mutfak'a geç.",
-	"Alttaki Köfte butonuna dokun, köfte ızgaraya konsun.",
-	"Köfte pişiyor! Üstündeki çubuk YEŞİL olunca köfteye dokunup al. Geç kalırsan yanar!",
-	"Köfte hazır. Aşağıdaki sipariş fişinde 'Tepsiye Koy'a bas.",
+	"Alttaki {urun} butonuna dokun, {cihaz} pişmeye başlasın.",
+	"{urun} pişiyor! Üstündeki çubuk YEŞİL olunca ürüne dokunup al. Tam ortada yakalarsan bonus kazanırsın, geç kalırsan yanar!",
+	"{urun} hazır. Aşağıdaki sipariş fişinde 'Tepsiye Koy'a bas.",
 	"Sipariş hazır! Şimdi alttan Dükkan'a dön.",
 	"Müşteri sabırsızlanmadan 'Teslim Et'e bas. Çok bekletirsen parasını geri ister!",
 	"Müşteri tepsisini alıp masasına oturdu. Yemeği bitince masa kirlenir: üstünde sünger işareti olan masaya dokunup temizle.",
@@ -98,7 +99,7 @@ func _check(step: int) -> bool:
 				if not slot.is_empty():
 					return true
 		5:
-			return GameState.available("kofte") > 0 or _any_ready(shop)
+			return GameState.available(GameState.tutorial_food()) > 0 or _any_ready(shop)
 		6:
 			return _any_ready(shop)
 		7:
@@ -127,7 +128,9 @@ func _show_step(step: int) -> void:
 	if step < 0 or step >= STEPS.size():
 		queue_free()
 		return
-	_text.text = STEPS[step]
+	var food := GameState.tutorial_food()
+	var device: String = Items.PRODUCTS[food]["device"]
+	_text.text = (STEPS[step] as String).format({ "urun": Items.display_name(food), "cihaz": { "izgara": "ızgarada", "fritoz": "fritözde", "firin": "fırında" }.get(device, "") })
 	_counter.text = "USTA  •  Adım %d / %d" % [step + 1, STEPS.size()]
 	var last := step == STEPS.size() - 1
 	_button.text = "Başla!" if last else "Geç"
@@ -144,7 +147,7 @@ func _pulse() -> void:
 	var target: Control = null
 	match GameState.tutorial_step:
 		3: target = hud.nav_button(Main.KITCHEN)
-		4: target = hud.kitchen_button("kofte")
+		4: target = hud.kitchen_button(GameState.tutorial_food())
 		7: target = hud.nav_button(Main.SHOP)
 	if _pulsing and _pulsing != target:
 		_pulsing.modulate = Color.WHITE

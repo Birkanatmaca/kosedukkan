@@ -71,6 +71,11 @@ var _setup: SetupUI
 var _tutorial: TutorialUI
 var _settings: SettingsUI
 var _pause_overlay: ColorRect
+var _top_bar: PanelContainer
+## Üst barın altındaki "Görevler" düğmesi ve açık görev paneli
+var _quest_btn: Button
+var _quests_ui: QuestsUI
+var _quest_btn_state := ""
 ## sipariş numarası -> teslim bekleyen müşterinin kartı
 var _pickup_cards := {}
 
@@ -107,6 +112,7 @@ func _ready() -> void:
 	_bar_styles = [Util.style(Color("#e05555"), 6, 0), Util.style(Color("#f0a540"), 6, 0), Util.style(C_GREEN, 6, 0)]
 
 	_build_top_bar()
+	_build_quest_button()
 	_panels = [_build_market_panel(), _build_shop_panel(), _build_kitchen_panel()]
 	_build_nav()
 	if not GameState.setup_done:
@@ -166,6 +172,8 @@ func _ready() -> void:
 	GameState.setup_finished.connect(_on_setup_finished)
 	GameState.tutorial_changed.connect(_on_tutorial_changed)
 	GameState.day_ended.connect(_on_day_ended)
+	GameState.quests_changed.connect(_refresh_quest_button)
+	GameState.quest_completed.connect(_on_quest_completed)
 	GameState.day_started.connect(func(_d: int) -> void: _refresh_staff())
 	GameState.money_changed.connect(func(_v: int) -> void: _refresh_upgrades())
 
@@ -176,6 +184,7 @@ func _ready() -> void:
 	_refresh_level()
 	_refresh_upgrades()
 	_refresh_staff()
+	_refresh_quest_button()
 	_on_screen_changed(main.screen)
 
 
@@ -193,6 +202,7 @@ func _process(_delta: float) -> void:
 			_update_pickup_card(order, _pickup_cards[order["number"]], on_shop)
 	_update_courier_cards(on_shop)
 	_update_phone_badge(on_shop)
+	_place_quest_button()
 	var waiting := main.shop.waiting_count()
 
 	var cooked := false
@@ -232,6 +242,8 @@ func _process(_delta: float) -> void:
 
 
 func show_toast(text: String) -> void:
+	# Sonradan açılan panellerin (görevler, takvim) üstünde görünsün.
+	_toast.move_to_front()
 	_toast_label.text = text
 	if _toast_tween:
 		_toast_tween.kill()
@@ -249,6 +261,7 @@ func _make_theme() -> Theme:
 
 func _build_top_bar() -> void:
 	var bar := PanelContainer.new()
+	_top_bar = bar
 	bar.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	bar.offset_left = 20
 	bar.offset_right = -20
@@ -380,6 +393,8 @@ func _build_market_panel() -> Control:
 	GameState.reviews_changed.connect(_refresh_market)
 	_refresh_market()
 	GameState.level_up.connect(func(_l: int) -> void: _refresh_unlocks())
+	GameState.menu_changed.connect(_refresh_unlocks)
+	GameState.money_changed.connect(func(_v: int) -> void: _refresh_market())
 	_refresh_unlocks.call_deferred()
 	for page in _market_pages:
 		box.add_child(page)
@@ -572,12 +587,13 @@ func _on_day_ended(stats: Dictionary) -> void:
 	title.add_theme_font_size_override("font_size", 44)
 	v.add_child(title)
 	var expenses: int = stats["supplies"] + stats["upgrades"] + stats["wages"]
-	var net: int = stats["revenue"] + stats["tips"] - expenses
+	var net: int = stats["revenue"] + stats["tips"] + int(stats.get("quests", 0)) - expenses
 	var lines := [
 		["smile", "Servis edilen müşteri", "%d" % stats["served"], C_TEXT],
 		["angry", "Kaçan müşteri", "%d" % stats["lost"], UiKit.RED if stats["lost"] > 0 else C_TEXT],
 		["coins", "Satış", "+₺%d" % stats["revenue"], C_GREEN],
 		["heart", "Bahşiş", "+₺%d" % stats["tips"], C_GREEN],
+		["clipboard-list", "Görev ödülleri (%d/%d)" % [GameState.quests_done_count(), GameState.quests.size()], "+₺%d" % stats.get("quests", 0), C_GREEN],
 		["package", "Malzeme", "-₺%d" % stats["supplies"], C_TEXT],
 		["circle-arrow-up", "Geliştirme", "-₺%d" % stats["upgrades"], C_TEXT],
 		["users", "Maaşlar", "-₺%d" % stats["wages"], C_TEXT],
@@ -722,7 +738,7 @@ func _build_supplies_page() -> Control:
 func _build_menu_page() -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
-	box.add_child(_heading("Menü Fiyatları", "Pahalıysa müşteri azalır, ucuzsa kalabalık olur"))
+	box.add_child(_heading("Menü", "Fiyatı ayarla, yer açıldıkça menüne yeni ürün ekle"))
 	_tolerance_label = UiKit.label("", 19, UiKit.PURPLE, 900)
 	_tolerance_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(_tolerance_label)
@@ -769,18 +785,52 @@ func _build_menu_page() -> Control:
 		_style_button(plus, Color("#efe6dd"), C_TEXT)
 		plus.pressed.connect(_change_price.bind(id, 0.1))
 		row.add_child(plus)
-		_menu_refs[id] = { "card": card, "price": price_l, "profit": profit_l, "interest": interest_l, "bar": bar }
+		# Menüde olmayan ürün: yer varsa eklenir (yeni cihaz gerekiyorsa bedeli ödenir).
+		var add := Button.new()
+		add.custom_minimum_size = Vector2(190, 64)
+		add.add_theme_font_size_override("font_size", 20)
+		add.pressed.connect(_add_to_menu.bind(id))
+		row.add_child(add)
+		_menu_refs[id] = { "card": card, "price": price_l, "profit": profit_l, "interest": interest_l, "bar": bar,
+			"add": add, "controls": [minus, price_l, plus, bar, interest_l] }
 	return box
 
 
-## Kilitli ürünler mutfakta, markette ve menüde görünmez; seviye atlayınca açılır.
+## Menüde olmayan ürünler mutfakta, borsada ve hazır sayaçlarında görünmez;
+## menü sayfasında "Menüye Ekle" ile eklenir. Cihaz sekmeleri ve geliştirmeler
+## de sadece menüdeki cihazlar için görünür.
 func _refresh_unlocks() -> void:
 	_filter_kitchen_cards()
+	var devices := GameState.menu_devices()
+	for key in _view_buttons:
+		(_view_buttons[key] as Control).visible = key == "" or devices.has(key)
 	for id in _market_refs:
 		(_market_refs[id]["card"] as Control).visible = Items.unlocked(id)
-	for id in _menu_refs:
-		(_menu_refs[id]["card"] as Control).visible = Items.unlocked(id)
+	for labels in _ready_labels:
+		for id in labels:
+			((labels[id] as Control).get_parent().get_parent() as Control).visible = Items.unlocked(id)
+	for id in _upgrade_rows:
+		var device: String = Progression.UPGRADES[id].get("device", "")
+		((_upgrade_rows[id]["button"] as Control).get_parent().get_parent() as Control).visible = device == "" or devices.has(device)
 	_refresh_market()
+
+
+func _add_to_menu(id: String) -> void:
+	if GameState.menu.has(id):
+		return
+	if not GameState.menu_has_room(id):
+		show_toast("Menünde yer yok. Seviye atladıkça yer açılır")
+		Sfx.play("error")
+		return
+	if GameState.add_to_menu(id):
+		Sfx.play("kaching")
+		Haptics.success()
+		var device: String = Items.PRODUCTS[id]["device"]
+		var cost_note := "" if device == "" else " %s mutfakta." % Items.DEVICES[device]
+		show_toast("%s menüde!%s Malzemesini borsadan al" % [Items.display_name(id), cost_note])
+	else:
+		show_toast("Yeterli paran yok")
+		Sfx.play("error")
 
 
 func _change_price(id: String, step: float) -> void:
@@ -819,6 +869,27 @@ func _refresh_market() -> void:
 			roundi(tolerance * 100.0), roundi(100.0 / Progression.price_demand())]
 	for id in _menu_refs:
 		var refs: Dictionary = _menu_refs[id]
+		var on_menu := Items.unlocked(id)
+		for control in refs["controls"]:
+			(control as Control).visible = on_menu
+		var add: Button = refs["add"]
+		add.visible = not on_menu
+		if not on_menu:
+			var cost := GameState.menu_add_cost(id)
+			var device: String = Items.PRODUCTS[id]["device"]
+			if GameState.menu_has_room(id):
+				add.text = "Menüye Ekle" if cost == 0 else "Ekle ₺%d" % cost
+				add.disabled = GameState.money < cost
+				UiKit.set_icon(add, "plus", 24)
+				_style_button(add, C_GREEN, Color.WHITE)
+			else:
+				var at := Progression.next_food_slot_level(GameState.level)
+				add.text = "Menü dolu" if at < 0 else "Sv %d" % at
+				add.disabled = true
+				UiKit.set_icon(add, "lock", 24)
+			(refs["profit"] as Label).text = "Taban ₺%d" % Items.PRODUCTS[id]["price"] + \
+				("" if device == "" else "  •  %s%s" % [Items.DEVICES[device], "" if cost == 0 else " gerekir"])
+			continue
 		var price := Items.price(id)
 		var base: int = Items.PRODUCTS[id]["price"]
 		(refs["price"] as Label).text = "₺%d" % price
@@ -930,6 +1001,7 @@ func _refresh_level() -> void:
 ## Seviye atlayınca ortada büyük bir kutlama ve açılan geliştirmeler.
 func _on_level_up(level: int) -> void:
 	Sfx.play("level_up")
+	Haptics.celebrate()
 	var card := PanelContainer.new()
 	var level_style := UiKit.panel_style(32)
 	level_style.bg_color = UiKit.PURPLE
@@ -952,10 +1024,9 @@ func _on_level_up(level: int) -> void:
 	v.add_child(title)
 	var sub := Label.new()
 	var unlocks := Progression.unlocks_at(level)
-	var products := Items.unlocking_at(level)
 	sub.text = "Müşteriler artıyor, siparişler büyüyor!"
-	if not products.is_empty():
-		sub.text += "\nYeni ürün açıldı: " + ", ".join(products) + "\n(Marketten malzemesini al)"
+	if Progression.FOOD_SLOT_LEVELS.has(level):
+		sub.text += "\nMenünde yeni yemek yeri açıldı!\n(Market › Menü'den ekle)"
 	if not unlocks.is_empty():
 		sub.text += "\nYeni geliştirme: " + ", ".join(unlocks)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1568,6 +1639,61 @@ func _open_order_entry(customer: ShopCustomer) -> void:
 		return
 	main.focus_register(true)
 	_order_entry.open(customer)
+
+
+# --- Günlük görevler ------------------------------------------------------------
+
+func _build_quest_button() -> void:
+	_quest_btn = Button.new()
+	_quest_btn.add_theme_font_size_override("font_size", 21)
+	_quest_btn.custom_minimum_size = Vector2(0, 56)
+	_quest_btn.pressed.connect(open_quests)
+	_root.add_child(_quest_btn)
+
+
+## Düğme üst barın hemen altında, solda durur. Paket çağrısı afişi çıkınca ya da
+## kurulum / tanıtım sürerken gizlenir.
+func _place_quest_button() -> void:
+	var ringing: bool = not main.shop.call.is_empty() and not main.shop.call["open"]
+	_quest_btn.visible = GameState.setup_done and not GameState.tutorial_active() \
+		and not GameState.quests.is_empty() and not ringing
+	if not _quest_btn.visible:
+		return
+	_quest_btn.position = Vector2(_top_bar.position.x, _top_bar.position.y + _top_bar.size.y + 10)
+	if GameState.quests_ready_count() > 0:
+		# Ödül bekliyor: hafifçe nabız atar.
+		var pulse := 1.0 + 0.05 * sin(Time.get_ticks_msec() * 0.007)
+		_quest_btn.pivot_offset = _quest_btn.size * 0.5
+		_quest_btn.scale = Vector2(pulse, pulse)
+	else:
+		_quest_btn.scale = Vector2.ONE
+
+
+func _refresh_quest_button() -> void:
+	var ready := GameState.quests_ready_count()
+	var state := "ready" if ready > 0 else "idle"
+	if ready > 0:
+		_quest_btn.text = "Ödül Al! (%d)" % ready
+	else:
+		_quest_btn.text = "Görevler %d/%d" % [GameState.quests_done_count(), GameState.quests.size()]
+	if state != _quest_btn_state:
+		_quest_btn_state = state
+		UiKit.set_icon(_quest_btn, "party-popper" if ready > 0 else "clipboard-list", 26)
+		UiKit.candy(_quest_btn, UiKit.GREEN if ready > 0 else UiKit.CARD, Color.WHITE if ready > 0 else UiKit.TEXT)
+	_quest_btn.size = Vector2.ZERO
+
+
+func _on_quest_completed(quest: Dictionary) -> void:
+	Sfx.play("approve")
+	Haptics.success()
+	show_toast("Görev tamamlandı: %s\nÖdülünü Görevler'den al" % Quests.title(quest))
+
+
+func open_quests() -> void:
+	if _quests_ui and is_instance_valid(_quests_ui):
+		return
+	_quests_ui = QuestsUI.new()
+	_root.add_child(_quests_ui)
 
 
 ## Takvim: gün gün kazanç ve gider dökümü.

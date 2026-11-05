@@ -6,6 +6,7 @@ extends Node3D
 ## siparişlerin tepsileri durur; "Tepsiye Koy" denince ürünler raftaki tabaklardan
 ## tepsiye uçar. Izgaranın altındaki kömürler kızgın kızgın parlar. Sağda taş
 ## fırın var: lahmacun, pizza ve pide kürekle fırına sürülür, pişince kürekle çıkarılır.
+## Sadece menüdeki ürünlerin cihazları görünür; menüye yeni cihaz gelince belirir.
 
 signal slot_added(slot: CookSlot)
 ## Tepsiye ürün kondu (kamera genel açıya döner, uçuş görünsün)
@@ -45,6 +46,10 @@ const ON_TRAY_SCALE := 0.55
 const TRAY_FOOD_ORDER := [2, 3, 0, 1, 4]
 const TRAY_DRINK_ORDER := [0, 1, 4, 2, 3]
 const ON_PLATE_SCALE := 0.62
+## Tam kıvam bonusu: ilk yakalayışta bu kadar bahşiş, seride her seferinde +1
+## (en fazla BULLSEYE_STREAK_MAX kadar fazlası).
+const BULLSEYE_TIP := 2
+const BULLSEYE_STREAK_MAX := 3
 
 var slots: Array[CookSlot] = []
 var shop: Shop
@@ -63,17 +68,22 @@ var _peel_tray: Node3D
 var _peel_tween: Tween
 var _peel_pending := Callable()
 var _t := 0.0
+## cihaz -> o cihazın bütün parçalarını tutan düğüm (menüde yoksa gizli)
+var _device_roots := {}
+## Art arda tam kıvam yakalama sayısı (bonus büyür)
+var _streak := 0
 
 
 func _ready() -> void:
 	_build_room()
-	_build_grill()
-	_build_fryer()
-	_build_oven()
+	_build_device("izgara", _build_grill)
+	_build_device("fritoz", _build_fryer)
+	_build_device("firin", _build_oven)
 	_build_pass()
 	_sync_upgrades()
 	GameState.prepared_changed.connect(_refresh_pass)
 	GameState.upgrades_changed.connect(_sync_upgrades)
+	GameState.menu_changed.connect(_sync_upgrades)
 	shop.orders_changed.connect(_sync_trays)
 	_refresh_pass()
 	_sync_trays()
@@ -107,14 +117,45 @@ func _process(delta: float) -> void:
 		flame.scale.x = 0.9 + 0.12 * sin(_t * (5.0 + i) + i * 2.0)
 
 
-## Yer sayısını ve pişirme hızını geliştirmelere göre ayarlar.
+## Cihazı kurar ve eklediği bütün parçaları tek bir düğümün altına toplar
+## (menüde değilse hepsi birlikte gizlenir).
+func _build_device(device: String, build: Callable) -> void:
+	var first := get_child_count()
+	build.call()
+	var root := Node3D.new()
+	root.name = device
+	var parts := get_children().slice(first)
+	add_child(root)
+	for part in parts:
+		part.reparent(root, false)
+	root.visible = false
+	_device_roots[device] = root
+
+
+## Menüdeki cihazları gösterir; menüye yeni gelen cihaz büyüyerek belirir.
+func _sync_devices() -> void:
+	var wanted := GameState.menu_devices()
+	for device in _device_roots:
+		var root: Node3D = _device_roots[device]
+		var show := wanted.has(device)
+		# (açılışta değil, oyun sırasında eklenince)
+		if show and not root.visible and _t > 0.0:
+			root.scale = Vector3.ONE * 0.01
+			root.create_tween().tween_property(root, "scale", Vector3.ONE, 0.45).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		root.visible = show
+
+
+## Yer sayısını ve pişirme hızını geliştirmelere göre ayarlar. Pişirme yerleri
+## sadece menüdeki cihazlarda açılır.
 func _sync_upgrades() -> void:
-	var grill_count := Progression.BASE_GRILL_SLOTS + GameState.upgrade_level("grill_slot")
-	var fryer_count := Progression.BASE_FRYER_SLOTS + GameState.upgrade_level("fryer_slot")
+	_sync_devices()
+	var devices := GameState.menu_devices()
+	var grill_count := Progression.BASE_GRILL_SLOTS + GameState.upgrade_level("grill_slot") if devices.has("izgara") else 0
+	var fryer_count := Progression.BASE_FRYER_SLOTS + GameState.upgrade_level("fryer_slot") if devices.has("fritoz") else 0
 	while _count("izgara") < mini(grill_count, GRILL_SLOTS.size()):
 		var p: Vector2 = GRILL_SLOTS[_count("izgara")]
 		_add_slot("izgara", Vector3(GRILL_X + p.x, 1.09, p.y))
-	var oven_count := Progression.BASE_OVEN_SLOTS + GameState.upgrade_level("oven_slot")
+	var oven_count := Progression.BASE_OVEN_SLOTS + GameState.upgrade_level("oven_slot") if devices.has("firin") else 0
 	while _count("firin") < mini(oven_count, OVEN_SLOTS.size()):
 		var p: Vector2 = OVEN_SLOTS[_count("firin")]
 		_add_slot("firin", Vector3(OVEN_X + p.x, OVEN_FLOOR + 0.01, p.y))
@@ -148,6 +189,7 @@ func add_ingredient(id: String) -> void:
 			if item == 1:
 				GameState.show_toast("Dikkat: %s malzemesinin tarihi geçmiş!" % Items.display_name(id))
 			slot.start(id, item == 1)
+			Haptics.tap()
 			if device == "firin":
 				_peel_in(slot, id)
 			return
@@ -165,17 +207,56 @@ func _on_slot_tapped(slot: CookSlot) -> void:
 	var quality := Items.quality_for(slot.doneness())
 	if slot.spoiled and quality > 0:
 		quality = 1
+	var bullseye := quality == 5 and Items.is_bullseye(slot.doneness())
+	var spot := slot.global_position
 	if slot.device == "firin":
 		_peel_out(slot, id, quality)
 	slot.clear()
 	Sfx.play("error" if quality == 0 else "collect", 0.08)
-	match quality:
-		0: GameState.show_toast("Yandı! Çöpe gitti")
-		2: GameState.show_toast("Az pişmiş... müşteri fark edebilir")
-		3: GameState.show_toast("Biraz fazla pişti")
-		5: GameState.show_toast("Tam kıvamında!")
+	if bullseye:
+		_reward_bullseye(spot)
+	else:
+		_streak = 0
+		match quality:
+			0:
+				GameState.show_toast("Yandı! Çöpe gitti")
+				Haptics.warning()
+			2: GameState.show_toast("Az pişmiş... müşteri fark edebilir")
+			3: GameState.show_toast("Biraz fazla pişti")
+			5: GameState.show_toast("İyi pişti! Çubuğun tam ortasında alırsan bonus var")
+		if quality > 0:
+			Haptics.tap()
 	if quality > 0:
 		GameState.add_prepared(id, quality)
+
+
+## Çubuğun tam ortasında alınan ürün: bahşiş bonusu ve yükselen "TAM KIVAM!"
+## yazısı. Art arda yakalandıkça bonus büyür (seri).
+func _reward_bullseye(spot: Vector3) -> void:
+	_streak += 1
+	var bonus := BULLSEYE_TIP + mini(_streak - 1, BULLSEYE_STREAK_MAX)
+	GameState.money += bonus
+	GameState.record_tip(bonus)
+	GameState.quest_event("bullseye")
+	GameState.quest_event("streak", _streak)
+	Sfx.play("coin", 0.1)
+	Haptics.success()
+	var text := "TAM KIVAM!\n+₺%d" % bonus
+	if _streak >= 2:
+		text += "  •  %d SERİ" % _streak
+	var label := Util.label3d(text, 64, Color("#ffd23f"), spot + Vector3(0, 0.35, 0.1))
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.outline_size = 14
+	label.outline_modulate = Color("#5a2a00")
+	label.no_depth_test = true
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.scale = Vector3.ONE * 0.3
+	add_child(label)
+	var tween := label.create_tween()
+	tween.tween_property(label, "scale", Vector3.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(label, "position:y", label.position.y + 0.45, 1.1).set_ease(Tween.EASE_OUT)
+	tween.tween_property(label, "modulate:a", 0.0, 0.35)
+	tween.tween_callback(label.queue_free)
 
 
 func _add_slot(device: String, pos: Vector3) -> void:

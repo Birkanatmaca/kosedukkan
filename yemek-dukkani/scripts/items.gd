@@ -6,21 +6,24 @@ extends RefCounted
 
 const PACK_SIZE := 5
 
-## unlock: ürünün açıldığı seviye. Kilitli ürün mutfakta, markette, menüde ve
-## siparişlerde görünmez; seviye atlayınca açılır.
+## Oyuncu menüsünü bu katalogdan seçer (GameState.menu). Menüde olmayan ürün
+## mutfakta, markette ve siparişlerde görünmez.
 const PRODUCTS := {
-	"tavuk": { "name": "Kajun Tavuk", "price": 14, "cook_time": 9.0, "device": "izgara", "pack_price": 20, "unlock": 1 },
-	"tavuk_sis": { "name": "Tavuk Şiş", "price": 15, "cook_time": 8.0, "device": "izgara", "pack_price": 18, "unlock": 1 },
-	"kofte": { "name": "Köfte", "price": 12, "cook_time": 7.0, "device": "izgara", "pack_price": 16, "unlock": 1 },
-	"patates": { "name": "Patates", "price": 7, "cook_time": 5.0, "device": "fritoz", "pack_price": 8, "unlock": 1 },
-	"kola": { "name": "Kola", "price": 5, "cook_time": 0.0, "device": "", "pack_price": 10, "unlock": 1 },
-	"ayran": { "name": "Ayran", "price": 5, "cook_time": 0.0, "device": "", "pack_price": 9, "unlock": 2 },
-	"lahmacun": { "name": "Lahmacun", "price": 16, "cook_time": 8.0, "device": "firin", "pack_price": 22, "unlock": 3 },
-	"pizza": { "name": "Pizza", "price": 22, "cook_time": 9.0, "device": "firin", "pack_price": 30, "unlock": 4 },
-	"pide": { "name": "Kaşarlı Pide", "price": 20, "cook_time": 10.0, "device": "firin", "pack_price": 28, "unlock": 5 },
+	"tavuk": { "name": "Kajun Tavuk", "price": 14, "cook_time": 9.0, "device": "izgara", "pack_price": 20 },
+	"tavuk_sis": { "name": "Tavuk Şiş", "price": 15, "cook_time": 8.0, "device": "izgara", "pack_price": 18 },
+	"kofte": { "name": "Köfte", "price": 12, "cook_time": 7.0, "device": "izgara", "pack_price": 16 },
+	"patates": { "name": "Patates", "price": 7, "cook_time": 5.0, "device": "fritoz", "pack_price": 8 },
+	"kola": { "name": "Kola", "price": 5, "cook_time": 0.0, "device": "", "pack_price": 10 },
+	"ayran": { "name": "Ayran", "price": 5, "cook_time": 0.0, "device": "", "pack_price": 9 },
+	"lahmacun": { "name": "Lahmacun", "price": 16, "cook_time": 8.0, "device": "firin", "pack_price": 22 },
+	"pizza": { "name": "Pizza", "price": 22, "cook_time": 9.0, "device": "firin", "pack_price": 30 },
+	"pide": { "name": "Kaşarlı Pide", "price": 20, "cook_time": 10.0, "device": "firin", "pack_price": 28 },
 }
 ## Cihazların ekrandaki adı
 const DEVICES := { "izgara": "Izgara", "fritoz": "Fritöz", "firin": "Fırın" }
+## Oyun içinde menüye yeni cihaz isteyen ürün eklenince ödenen cihaz bedeli
+## (kurulumda seçilen menünün cihazları ücretsizdir).
+const DEVICE_PRICES := { "izgara": 160, "fritoz": 110, "firin": 220 }
 
 ## Meshy modelleri: ürün -> [dosya, ölçek, y dönüşü, (adet)]. Adet verilirse
 ## model yan yana o kadar kopya dizilir (bir porsiyon köfte = 3 köfte).
@@ -57,27 +60,23 @@ const BURNT_LIMIT := 1.6
 const MAX_DONENESS := 1.8
 
 
-## Ürün bu seviyede açık mı?
+## Ürün menüde mi?
 static func unlocked(id: String) -> bool:
-	return GameState.level >= int(PRODUCTS[id].get("unlock", 1))
+	return GameState.menu.has(id)
 
 
-## Açık ürünler (cihaz verilirse sadece o cihazda pişenler; "" içecekler).
+## Yemek mi (bir cihazda pişer), içecek mi?
+static func is_food(id: String) -> bool:
+	return PRODUCTS[id]["device"] != ""
+
+
+## Menüdeki ürünler (cihaz verilirse sadece o cihazda pişenler; "" içecekler).
 static func unlocked_ids(device: Variant = null) -> Array[String]:
 	var list: Array[String] = []
 	for id in PRODUCTS:
 		if unlocked(id) and (device == null or PRODUCTS[id]["device"] == device):
 			list.append(id)
 	return list
-
-
-## Bu seviyede açılan ürünlerin adları.
-static func unlocking_at(level: int) -> Array[String]:
-	var names: Array[String] = []
-	for id in PRODUCTS:
-		if int(PRODUCTS[id].get("unlock", 1)) == level:
-			names.append(PRODUCTS[id]["name"])
-	return names
 
 
 ## Satış fiyatı: menüdeki taban fiyat × oyuncunun ayarladığı çarpan.
@@ -87,6 +86,15 @@ static func price(id: String) -> int:
 
 static func display_name(id: String) -> String:
 	return PRODUCTS[id]["name"]
+
+
+## Kıvam çubuğunun tam ortası: pişme oranı 1.0'a bu kadar yakınken alınan ürün
+## "tam kıvam" sayılır, bonus kazandırır.
+const BULLSEYE := 0.08
+
+
+static func is_bullseye(doneness: float) -> bool:
+	return absf(doneness - 1.0) <= BULLSEYE
 
 
 ## Pişme oranına göre kalite: 5 tam, 3 fazla pişmiş, 2 az pişmiş, 0 yanık.

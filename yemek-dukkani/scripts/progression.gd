@@ -13,12 +13,13 @@ extends RefCounted
 const MAX_LEVEL := 30
 
 ## Geliştirmeler. costs[i] ve levels[i]: i. kademenin fiyatı ve gereken seviye.
+## device: sadece o cihaz menüdeyse görünür.
 const UPGRADES := {
-	"grill_slot": { "name": "Ekstra Izgara Yeri", "icon": "flame", "desc": "Izgaraya +1 pişirme yeri", "costs": [90, 180, 320, 480, 680, 900], "levels": [2, 4, 6, 8, 10, 12] },
-	"fryer_slot": { "name": "Ekstra Fritöz Sepeti", "icon": "cooking-pot", "desc": "Fritöze +1 sepet", "costs": [80, 200], "levels": [3, 6] },
-	"oven_slot": { "name": "Ekstra Fırın Yeri", "icon": "flame", "desc": "Fırına +1 pişirme yeri", "costs": [160, 320], "levels": [4, 7] },
-	"grill_speed": { "name": "Güçlü Izgara", "icon": "zap", "desc": "Izgara %15 daha hızlı pişirir", "costs": [70, 150, 280], "levels": [2, 4, 7] },
-	"fryer_speed": { "name": "Güçlü Fritöz", "icon": "trending-up", "desc": "Fritöz %15 daha hızlı pişirir", "costs": [60, 140, 260], "levels": [3, 5, 8] },
+	"grill_slot": { "name": "Ekstra Izgara Yeri", "icon": "flame", "desc": "Izgaraya +1 pişirme yeri", "costs": [90, 180, 320, 480, 680, 900], "levels": [2, 4, 6, 8, 10, 12], "device": "izgara" },
+	"fryer_slot": { "name": "Ekstra Fritöz Sepeti", "icon": "cooking-pot", "desc": "Fritöze +1 sepet", "costs": [80, 200], "levels": [3, 6], "device": "fritoz" },
+	"oven_slot": { "name": "Ekstra Fırın Yeri", "icon": "flame", "desc": "Fırına +1 pişirme yeri", "costs": [160, 320], "levels": [4, 7], "device": "firin" },
+	"grill_speed": { "name": "Güçlü Izgara", "icon": "zap", "desc": "Izgara %15 daha hızlı pişirir", "costs": [70, 150, 280], "levels": [2, 4, 7], "device": "izgara" },
+	"fryer_speed": { "name": "Güçlü Fritöz", "icon": "trending-up", "desc": "Fritöz %15 daha hızlı pişirir", "costs": [60, 140, 260], "levels": [3, 5, 8], "device": "fritoz" },
 	"tables": { "name": "Yeni Masalar", "icon": "armchair", "desc": "Salona +2 masa", "costs": [120], "levels": [3] },
 	"comfort": { "name": "Müzik ve Dekor", "icon": "music", "desc": "Müşteriler %12 daha sabırlı", "costs": [60, 130, 250], "levels": [2, 5, 8] },
 }
@@ -27,6 +28,34 @@ const BASE_GRILL_SLOTS := 3
 const BASE_FRYER_SLOTS := 2
 const BASE_OVEN_SLOTS := 2
 const BASE_TABLES := 4
+
+## Menü: başlangıçta en az MENU_MIN_FOOD, en fazla START_FOOD_SLOTS yemek ve en az
+## MENU_MIN_DRINK içecek seçilir. FOOD_SLOT_LEVELS'teki her seviyede +1 yemek yeri açılır.
+const MENU_MIN_FOOD := 2
+const MENU_MIN_DRINK := 1
+const START_FOOD_SLOTS := 4
+const FOOD_SLOT_LEVELS := [4, 7, 10]
+
+
+## Menüdeki yer sayısı: kind "food" ya da "drink".
+static func menu_slots(kind: String, level: int) -> int:
+	if kind == "drink":
+		# İçecek az: hepsi menüye alınabilir.
+		return Items.PRODUCTS.keys().filter(func(id: String) -> bool: return not Items.is_food(id)).size()
+	var slots := START_FOOD_SLOTS
+	for at in FOOD_SLOT_LEVELS:
+		if level >= at:
+			slots += 1
+	return slots
+
+
+## Bir sonraki yemek yerinin açıldığı seviye (yoksa -1).
+static func next_food_slot_level(level: int) -> int:
+	for at in FOOD_SLOT_LEVELS:
+		if level < at:
+			return at
+	return -1
+
 
 
 ## Sonraki seviye için gereken XP. Satış başına ~15–35 XP kazanılır:
