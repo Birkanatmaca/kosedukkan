@@ -51,7 +51,7 @@ func _ready() -> void:
 	kitchen.tray_filled.connect(kitchen_focus.bind(""))
 
 	_views = [
-		_view(market, Vector3(0, 2.3, 3.6), Vector3(0, 1.0, -1.5)),
+		_view(market, Vector3(0, 2.3, 3.6), Vector3(0, 0.5, -1.5)),
 		_view(shop, Vector3(0, 2.5, 3.3), Vector3(0, 0.95, -4.5)),
 		_view(kitchen, Vector3(-0.15, 3.6, 2.3), Vector3(-0.15, 0.45, 1.0)),
 	]
@@ -206,7 +206,9 @@ func _view(station: Node3D, eye: Vector3, target: Vector3) -> Transform3D:
 func _build_environment() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color("#1b1410")
+	# Sahnenin dışı (toptancının tavanı, mutfak tezgâhının altı) koyu blok gibi
+	# görünmesin: duvarlarla uyumlu sıcak krem.
+	env.background_color = Color("#eadcc8")
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color("#fff1e0")
 	env.ambient_light_energy = 0.65
@@ -239,4 +241,5 @@ func _update_daylight() -> void:
 	_sun.light_color = tint
 	_env.ambient_light_energy = 0.3 + 0.35 * light
 	_env.ambient_light_color = Color("#fff1e0").lerp(Color("#5a6aa8"), 1.0 - light)
+	_env.background_color = Color("#eadcc8").lerp(Color("#3a3548"), (1.0 - light) * 0.8)
 	shop.set_daylight(light, tint)

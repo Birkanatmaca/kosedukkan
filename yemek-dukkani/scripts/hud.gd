@@ -13,6 +13,8 @@ const NAV_TEXT := ["Market", "Dükkan", "Mutfak"]
 const NAV_ICONS := ["shopping-cart", "store", "chef-hat"]
 const BOTTOM_MARGIN := 24.0
 const NAV_HEIGHT := 92.0
+## Kilitli / tamamlanmış düğmelerin zemini (yazı koyu kalır, okunur)
+const C_LOCKED := Color("#efe7de")
 
 var main: Main
 
@@ -36,6 +38,7 @@ var _money: Label
 var _rating_btn: Button
 var _nav: Array[Button] = []
 var _panels: Array[Control] = []
+var _market_panel: PanelContainer
 var _cards := {}
 var _gauges: Array[CookGauge] = []
 var _toast: PanelContainer
@@ -115,6 +118,9 @@ func _ready() -> void:
 	_build_quest_button()
 	_panels = [_build_market_panel(), _build_shop_panel(), _build_kitchen_panel()]
 	_build_nav()
+	_nav_row.resized.connect(_layout_panels)
+	_root.resized.connect(_layout_panels)
+	_layout_panels.call_deferred()
 	if not GameState.setup_done:
 		_setup = SetupUI.new()
 		_root.add_child(_setup)
@@ -353,6 +359,25 @@ func _build_nav() -> void:
 		_nav.append(btn)
 
 
+## Alt paneller alt menünün gerçek yüksekliğine göre yerleşir (düğmeler ikon ve
+## yazıyla NAV_HEIGHT'tan uzun olabiliyor; paneller altına girmesin). Market paneli
+## sabit boyludur: üst barın altından alt menüye kadar, ekranın üst %30'u 3D
+## toptancıya kalır.
+func _layout_panels() -> void:
+	var bottom := -(BOTTOM_MARGIN + maxf(_nav_row.size.y, NAV_HEIGHT) + 14.0)
+	for i in _panels.size():
+		var panel := _panels[i]
+		if panel == _market_panel:
+			continue
+		panel.offset_top = bottom
+		panel.offset_bottom = bottom
+	if _market_panel:
+		_market_panel.anchor_top = 0.0
+		_market_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+		_market_panel.offset_top = maxf(196.0, _root.size.y * 0.3)
+		_market_panel.offset_bottom = bottom
+
+
 ## Alt menünün hemen üstünde duran, içeriğe göre yukarı doğru büyüyen panel.
 func _bottom_panel() -> PanelContainer:
 	var panel := PanelContainer.new()
@@ -396,8 +421,19 @@ func _build_market_panel() -> Control:
 	GameState.menu_changed.connect(_refresh_unlocks)
 	GameState.money_changed.connect(func(_v: int) -> void: _refresh_market())
 	_refresh_unlocks.call_deferred()
-	for page in _market_pages:
-		box.add_child(page)
+	# Panelin boyu sabit (sekme değişince zıplamasın); sayfalar içinde kayar.
+	for i in _market_pages.size():
+		var page := _market_pages[i]
+		page.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if i < 2:
+			var scroll := ScrollContainer.new()
+			scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+			scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			scroll.add_child(page)
+			_market_pages[i] = scroll
+		box.add_child(_market_pages[i])
+	_market_panel = panel
 	_show_market_tab(0)
 	return panel
 
@@ -408,7 +444,7 @@ func _build_staff_page() -> Control:
 	box.add_theme_constant_override("separation", 12)
 	box.add_child(_heading("Personel", "Garson masaları temizler, kurye paket götürür • maaş gün sonunda"))
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(0, 560)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	box.add_child(scroll)
 	_staff_list = VBoxContainer.new()
@@ -852,7 +888,7 @@ func _refresh_market() -> void:
 		(refs["price"] as Label).text = "₺%d" % GameState.pack_price(id)
 		var change := Exchange.change_percent(entry)
 		var trend: Label = refs["trend"]
-		trend.text = "▲ %%%d" % change if change > 0 else ("▼ %%%d" % -change if change < 0 else "–")
+		trend.text = "▲ %%%d" % change if change > 0 else ("▼ %%%d" % -change if change < 0 else "sabit")
 		# Alıcı için fiyatın düşmesi iyi (yeşil), artması kötü (kırmızı)
 		trend.add_theme_color_override("font_color", UiKit.RED if change > 0 else (UiKit.GREEN if change < 0 else C_MUTED))
 		var deal: String = entry["deal"]
@@ -887,6 +923,7 @@ func _refresh_market() -> void:
 				add.text = "Menü dolu" if at < 0 else "Sv %d" % at
 				add.disabled = true
 				UiKit.set_icon(add, "lock", 24)
+				_style_button(add, C_LOCKED, C_TEXT)
 			(refs["profit"] as Label).text = "Taban ₺%d" % Items.PRODUCTS[id]["price"] + \
 				("" if device == "" else "  •  %s%s" % [Items.DEVICES[device], "" if cost == 0 else " gerekir"])
 			continue
@@ -919,7 +956,7 @@ func _build_upgrades_page() -> Control:
 	box.add_theme_constant_override("separation", 12)
 	box.add_child(_heading("Geliştirmeler", "Seviye atladıkça yenileri açılır"))
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(0, 560)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	box.add_child(scroll)
 	var list := VBoxContainer.new()
@@ -979,12 +1016,14 @@ func _refresh_upgrades() -> void:
 			btn.text = "MAKS"
 			UiKit.set_icon(btn, "check", 28)
 			btn.disabled = true
+			_style_button(btn, C_LOCKED, C_TEXT)
 			continue
 		var needed := Progression.upgrade_required_level(id, current)
 		if GameState.level < needed:
 			btn.text = "Sv %d" % needed
 			UiKit.set_icon(btn, "lock", 28)
 			btn.disabled = true
+			_style_button(btn, C_LOCKED, C_TEXT)
 			continue
 		var cost := Progression.upgrade_cost(id, current)
 		btn.text = "₺%d" % cost
@@ -1292,6 +1331,32 @@ func _apply_safe_area() -> void:
 	_root.offset_right = -maxf(0.0, window.x - safe.end.x) * scale
 
 
+## Arayüz güvenli alana çekildiği için tam ekran karartma katmanları (durdurma,
+## ayarlar, görevler, takvim...) üstte ve altta açık şerit bırakıyordu. Güvenli
+## alanın tamamını kaplayan katman ekranın kenarlarına kadar uzatılır; içindeki
+## tam ekran kutular (ortalanan paneller) güvenli alanda kalır.
+func _cover_unsafe(rect: ColorRect) -> void:
+	if not is_instance_valid(rect) or rect.anchor_right < 1.0 or rect.anchor_bottom < 1.0 \
+			or rect.anchor_left > 0.0 or rect.anchor_top > 0.0:
+		return
+	if not rect.get_global_rect().is_equal_approx(_root.get_global_rect()):
+		return
+	var inset := Vector4(_root.offset_left, _root.offset_top, -_root.offset_right, -_root.offset_bottom)
+	if inset == Vector4.ZERO:
+		return
+	rect.offset_left -= inset.x
+	rect.offset_top -= inset.y
+	rect.offset_right += inset.z
+	rect.offset_bottom += inset.w
+	for child in rect.get_children():
+		var c := child as Control
+		if c and c.anchor_right >= 1.0 and c.anchor_bottom >= 1.0 and c.anchor_left <= 0.0 and c.anchor_top <= 0.0:
+			c.offset_left += inset.x
+			c.offset_top += inset.y
+			c.offset_right -= inset.z
+			c.offset_bottom -= inset.w
+
+
 ## Güvenli alanın üst boşluğu (çentik); masaüstünde 0.
 func safe_top() -> float:
 	return _root.offset_top
@@ -1324,6 +1389,9 @@ func _input(event: InputEvent) -> void:
 
 
 func _on_node_added(node: Node) -> void:
+	# Ekranı karartan katmanlar çentik ve ev çubuğunun altına da uzansın.
+	if node is ColorRect and _root.is_ancestor_of(node):
+		node.ready.connect(_cover_unsafe.bind(node), CONNECT_ONE_SHOT | CONNECT_DEFERRED)
 	# Kaydırılabilir alanlar telefonda parmakla (butonların üstünden de) kayar.
 	if node is ScrollContainer and not node.has_meta("touch_scroll"):
 		node.set_meta("touch_scroll", true)
