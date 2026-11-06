@@ -155,7 +155,11 @@ func _go_work() -> void:
 	_set_icon("", Color.WHITE)
 	if randf() < 0.4:
 		state = State.TO_WINDOW
-		var spot: Array = WINDOW_SPOTS.pick_random()
+		# Genişletmeyle açılan yan duvarın pencereleri artık yok.
+		var spots := WINDOW_SPOTS.filter(func(w: Array) -> bool:
+			var x: float = (w[0] as Vector3).x
+			return absf(x) < 5.0 or GameState.upgrade_level("annex" if x < 0.0 else "garden") == 0)
+		var spot: Array = spots.pick_random()
 		_follow(Shop.corridor_path(position, spot[0]), spot[1])
 		return
 	state = State.TO_SWEEP

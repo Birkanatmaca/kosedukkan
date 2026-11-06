@@ -444,6 +444,13 @@ func end_day() -> void:
 		else:
 			staff.erase(person)
 			quitters.append(person["name"])
+	# Kira ve faturalar (para yetmezse kasadaki kadarı ödenir)
+	var costs := Progression.daily_costs()
+	var due: int = costs["rent"] + costs["bills"]
+	var paid_rent := mini(due, maxi(money, 0))
+	money -= paid_rent
+	day_stats["rent"] = paid_rent
+	day_stats["rent_due"] = due
 	day_stats["quitters"] = quitters
 	day_stats["money"] = money
 	_record_day(paid, quitters)
@@ -458,7 +465,7 @@ func _record_day(paid: Array[Dictionary], quitters: Array[String]) -> void:
 		"day": day, "date": Time.get_date_string_from_system(), "money": money,
 		"wages_paid": paid, "quitters": quitters,
 	}
-	for key in ["revenue", "tips", "quests", "gifts", "supplies", "upgrades", "wages", "served", "lost"]:
+	for key in ["revenue", "tips", "quests", "gifts", "supplies", "upgrades", "wages", "rent", "served", "lost"]:
 		record[key] = int(day_stats.get(key, 0))
 	history.assign(history.filter(func(r: Dictionary) -> bool: return int(r["day"]) != day))
 	history.append(record)
@@ -466,7 +473,7 @@ func _record_day(paid: Array[Dictionary], quitters: Array[String]) -> void:
 
 ## Günün net kazancı: gelir + bahşiş + görev ödülü − malzeme − geliştirme − maaş.
 static func net_of(record: Dictionary) -> int:
-	return int(record.get("revenue", 0)) + int(record.get("tips", 0)) + int(record.get("quests", 0)) + int(record.get("gifts", 0)) - int(record.get("supplies", 0)) 		- int(record.get("upgrades", 0)) - int(record.get("wages", 0))
+	return int(record.get("revenue", 0)) + int(record.get("tips", 0)) + int(record.get("quests", 0)) + int(record.get("gifts", 0)) - int(record.get("supplies", 0)) 		- int(record.get("upgrades", 0)) - int(record.get("wages", 0)) - int(record.get("rent", 0))
 
 
 func start_day() -> void:
@@ -646,7 +653,7 @@ func haggle(index: int) -> bool:
 
 
 func _reset_stats() -> void:
-	day_stats = { "revenue": 0, "tips": 0, "quests": 0, "gifts": 0, "supplies": 0, "upgrades": 0, "wages": 0, "served": 0, "lost": 0 }
+	day_stats = { "revenue": 0, "tips": 0, "quests": 0, "gifts": 0, "supplies": 0, "upgrades": 0, "wages": 0, "rent": 0, "served": 0, "lost": 0 }
 
 
 func add_xp(amount: int) -> void:

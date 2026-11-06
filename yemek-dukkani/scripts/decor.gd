@@ -18,7 +18,7 @@ const WALL_COLORS := [
 	{ "name": "Zeytin", "wall": Color("#e8e6cf"), "side": Color("#dddab9"), "panel": Color("#6b7036") },
 ]
 ## Oyun içinde (Market › Dekor) yeni bir duvar rengi almanın bedeli
-const PAINT_PRICE := 40
+const PAINT_PRICE := 100
 const RUIN_WALL := { "wall": Color("#8c8478"), "side": Color("#7d766b"), "panel": Color("#4f463d") }
 
 const FLOORS := [
@@ -44,37 +44,37 @@ const ITEMS := {
 const STYLES := {
 	"rug": { "name": "Giriş Halısı", "icon": "layout-grid", "key": "rug", "options": [
 		{ "name": "Yok", "price": 0, "color": Color("#b8ada0") },
-		{ "name": "Yeşil Paspas", "price": 35, "color": Color("#3f7f5a") },
-		{ "name": "Kırmızı Kilim", "price": 70, "color": Color("#b53a2c") },
-		{ "name": "Uzun Yolluk", "price": 120, "color": Color("#7a3b6a") },
+		{ "name": "Yeşil Paspas", "price": 90, "color": Color("#3f7f5a") },
+		{ "name": "Kırmızı Kilim", "price": 180, "color": Color("#b53a2c") },
+		{ "name": "Uzun Yolluk", "price": 300, "color": Color("#7a3b6a") },
 	] },
 	"door": { "name": "Kapı", "icon": "door-open", "key": "door", "options": [
 		{ "name": "Ahşap", "price": 0, "color": Color("#7a4b32") },
-		{ "name": "Kırmızı Retro", "price": 100, "color": Color("#b53a2c") },
-		{ "name": "Nane Yeşili", "price": 100, "color": Color("#3f8f6a") },
-		{ "name": "Siyah Metal", "price": 130, "color": Color("#2b2d33") },
+		{ "name": "Kırmızı Retro", "price": 250, "color": Color("#b53a2c") },
+		{ "name": "Nane Yeşili", "price": 250, "color": Color("#3f8f6a") },
+		{ "name": "Siyah Metal", "price": 320, "color": Color("#2b2d33") },
 	] },
 	"window": { "name": "Pencere Çerçevesi", "icon": "app-window", "key": "window_style", "options": [
 		{ "name": "Beyaz", "price": 0, "color": Color("#f7f4ee") },
-		{ "name": "Ahşap", "price": 80, "color": Color("#8a5a3a") },
-		{ "name": "Yeşil", "price": 80, "color": Color("#3f7f5a") },
-		{ "name": "Siyah", "price": 90, "color": Color("#2b2d33") },
+		{ "name": "Ahşap", "price": 200, "color": Color("#8a5a3a") },
+		{ "name": "Yeşil", "price": 200, "color": Color("#3f7f5a") },
+		{ "name": "Siyah", "price": 220, "color": Color("#2b2d33") },
 	] },
 	"table": { "name": "Masa Çeşidi", "icon": "armchair", "key": "table_style", "options": [
 		{ "name": "Klasik", "price": 0, "color": Color("#c9a77a") },
-		{ "name": "Ahşap Kare", "price": 120, "color": Color("#a0703f") },
-		{ "name": "Mermer Yuvarlak", "price": 170, "color": Color("#e9e7e2") },
-		{ "name": "Retro Kırmızı", "price": 150, "color": Color("#c8402f") },
+		{ "name": "Ahşap Kare", "price": 300, "color": Color("#a0703f") },
+		{ "name": "Mermer Yuvarlak", "price": 420, "color": Color("#e9e7e2") },
+		{ "name": "Retro Kırmızı", "price": 380, "color": Color("#c8402f") },
 	] },
 }
 ## Süsler: bir kez alınır, sonra açılıp kapatılabilir.
 const ORNAMENTS := {
-	"lights": { "name": "Işık Zinciri", "icon": "sparkles", "desc": "Vitrin duvarında renkli ampuller", "price": 70 },
-	"flowers": { "name": "Vitrin Çiçekleri", "icon": "sprout", "desc": "Pencere önlerinde çiçek kasaları", "price": 55 },
-	"clock": { "name": "Duvar Saati", "icon": "clock", "desc": "Sol duvarda büyük saat", "price": 45 },
-	"frames": { "name": "Tablolar", "icon": "image", "desc": "Sağ duvarda iki tablo", "price": 60 },
-	"nazar": { "name": "Nazar Boncuğu", "icon": "heart", "desc": "Kapının yanında, uğur getirir", "price": 25 },
-	"board": { "name": "Menü Panosu", "icon": "clipboard-list", "desc": "Kapı yanında kara tahta", "price": 50 },
+	"lights": { "name": "Işık Zinciri", "icon": "sparkles", "desc": "Vitrin duvarında renkli ampuller", "price": 180 },
+	"flowers": { "name": "Vitrin Çiçekleri", "icon": "sprout", "desc": "Pencere önlerinde çiçek kasaları", "price": 140 },
+	"clock": { "name": "Duvar Saati", "icon": "clock", "desc": "Sol duvarda büyük saat", "price": 110 },
+	"frames": { "name": "Tablolar", "icon": "image", "desc": "Sağ duvarda iki tablo", "price": 150 },
+	"nazar": { "name": "Nazar Boncuğu", "icon": "heart", "desc": "Kapının yanında, uğur getirir", "price": 60 },
+	"board": { "name": "Menü Panosu", "icon": "clipboard-list", "desc": "Kapı yanında kara tahta", "price": 130 },
 }
 
 const TABLE_PRICE := 35

@@ -25,8 +25,11 @@ const BUILDING_COLORS := [Color("#e8c9a0"), Color("#c98f6b"), Color("#a9c4c9"), 
 var _sky: StandardMaterial3D
 var _cars: Array[Node3D] = []
 var _car_timer := 0.0
-## Toplu çizilecek parçalar: tür -> [[Transform3D, Color], ...]
-var _batches := { "box": [], "sphere": [], "cylinder": [] }
+## Toplu çizilecek parçalar: grup -> tür -> [[Transform3D, Color], ...]
+## Grup 0 sokak, -1 / 1 sol / sağ yan bahçe (genişletme alınınca gizlenir).
+var _batches := {}
+var _group := 0
+var _groups := {}
 
 
 func _ready() -> void:
@@ -80,12 +83,14 @@ func _build_ground() -> void:
 	# Yanlardaki çimenlik (yan pencerelerden görünür)
 	var grass := Util.tile_material(Color("#7fb366"), Color("#76ab5e"), 0.6)
 	for side in [-1.0, 1.0]:
-		add_child(_flat(Util.box(Vector3(14, 0.1, 16), grass, Vector3(side * 13.2, -0.05, -2.6))))
+		add_child(_flat(Util.box(Vector3(14, 0.1, 16), grass, Vector3(side * 13.2, -0.06, -2.6))))
 		# Alçak çit
+		_group = int(side)
 		for z in range(-10, 6, 1):
 			_add("box", Vector3(0.08, 0.7, 0.08), Color("#f4efe6"), Vector3(side * 8.6, 0.35, z))
 		for y in [0.25, 0.55]:
-			add_child(_flat(Util.box(Vector3(0.05, 0.08, 16), Color("#f4efe6"), Vector3(side * 8.6, y, -2.0))))
+			_add("box", Vector3(0.05, 0.08, 16), Color("#f4efe6"), Vector3(side * 8.6, y, -2.0))
+		_group = 0
 
 
 func _build_buildings() -> void:
@@ -119,20 +124,24 @@ func _build_trees() -> void:
 	for x in [-8.5, 8.5, -16.0, 16.0]:
 		_tree(Vector3(x, 0, -12.1), 1.0)
 	for side in [-1.0, 1.0]:
+		_group = int(side)
 		for pos in [Vector3(7.6, 0, -8.2), Vector3(9.8, 0, -5.0), Vector3(7.4, 0, -3.4), Vector3(10.5, 0, -1.0), Vector3(8.0, 0, 1.6), Vector3(12.5, 0, -7.0)]:
 			_tree(Vector3(pos.x * side, 0, pos.z), randf_range(0.85, 1.25))
 		for pos in [Vector3(6.8, 0, -6.0), Vector3(6.9, 0, -1.6), Vector3(7.0, 0, -9.2)]:
 			_add("sphere", Vector3(1.17, 0.72, 0.9), Color("#5c9a4a"), Vector3(pos.x * side, 0.3, pos.z))
+	_group = 0
 
 
 func _tree(pos: Vector3, size: float) -> void:
 	var basis := Basis(Vector3.UP, randf_range(0, TAU)).scaled(Vector3.ONE * size)
 	var tree := Transform3D(basis, pos)
-	_batches["cylinder"].append([tree * Transform3D(Basis.from_scale(Vector3(0.28, 2.2, 0.28)), Vector3(0, 1.1, 0)), Color("#7a5a3a")])
+	_add("cylinder", Vector3.ONE, Color("#7a5a3a"), Vector3.ZERO)
+	_batches[_group]["cylinder"][-1][0] = tree * Transform3D(Basis.from_scale(Vector3(0.28, 2.2, 0.28)), Vector3(0, 1.1, 0))
 	var greens := [Color("#4f8f3f"), Color("#5fa04a"), Color("#6aab52")]
 	for leaf in [[Vector3(0, 2.6, 0), 1.0], [Vector3(0.45, 2.3, 0.2), 0.75], [Vector3(-0.4, 2.4, -0.25), 0.8], [Vector3(0.1, 3.2, -0.1), 0.7]]:
 		var r: float = leaf[1] * 2.0
-		_batches["sphere"].append([tree * Transform3D(Basis.from_scale(Vector3(r, r, r)), leaf[0]), greens.pick_random()])
+		_add("sphere", Vector3.ONE, greens.pick_random(), Vector3.ZERO)
+		_batches[_group]["sphere"][-1][0] = tree * Transform3D(Basis.from_scale(Vector3(r, r, r)), leaf[0])
 
 
 func _build_lamps() -> void:
@@ -181,7 +190,9 @@ func _flat(inst: MeshInstance3D) -> MeshInstance3D:
 
 ## Toplu çizim için bir parça ekler (birim mesh, boyut ve renk).
 func _add(kind: String, size: Vector3, color: Color, pos: Vector3) -> void:
-	_batches[kind].append([Transform3D(Basis.from_scale(size), pos), color])
+	if not _batches.has(_group):
+		_batches[_group] = { "box": [], "sphere": [], "cylinder": [] }
+	_batches[_group][kind].append([Transform3D(Basis.from_scale(size), pos), color])
 
 
 ## Biriken parçaları türüne göre birer MultiMesh olarak çizer (renk kopya başına).
@@ -199,20 +210,34 @@ func _flush_batches() -> void:
 	mat.vertex_color_use_as_albedo = true
 	mat.vertex_color_is_srgb = true
 	mat.roughness = 0.8
-	for kind in _batches:
-		var items: Array = _batches[kind]
-		if items.is_empty():
-			continue
-		var multi := MultiMesh.new()
-		multi.transform_format = MultiMesh.TRANSFORM_3D
-		multi.use_colors = true
-		multi.mesh = meshes[kind]
-		multi.instance_count = items.size()
-		for i in items.size():
-			multi.set_instance_transform(i, items[i][0])
-			multi.set_instance_color(i, items[i][1])
-		var inst := MultiMeshInstance3D.new()
-		inst.multimesh = multi
-		inst.material_override = mat
-		inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(inst)
+	for group in _batches:
+		var parent := Node3D.new()
+		add_child(parent)
+		_groups[group] = parent
+		for kind in _batches[group]:
+			_flush_kind(parent, meshes[kind], mat, _batches[group][kind])
+	_batches.clear()
+
+
+## Yan bahçenin ağaç ve çitlerini gizler (o tarafa genişletme yapıldı).
+func set_side_open(side: int, open: bool) -> void:
+	if _groups.has(side):
+		(_groups[side] as Node3D).visible = not open
+
+
+func _flush_kind(parent: Node3D, mesh: Mesh, mat: Material, items: Array) -> void:
+	if items.is_empty():
+		return
+	var multi := MultiMesh.new()
+	multi.transform_format = MultiMesh.TRANSFORM_3D
+	multi.use_colors = true
+	multi.mesh = mesh
+	multi.instance_count = items.size()
+	for i in items.size():
+		multi.set_instance_transform(i, items[i][0])
+		multi.set_instance_color(i, items[i][1])
+	var inst := MultiMeshInstance3D.new()
+	inst.multimesh = multi
+	inst.material_override = mat
+	inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(inst)

@@ -15,15 +15,31 @@ const MAX_LEVEL := 30
 ## Geliştirmeler. costs[i] ve levels[i]: i. kademenin fiyatı ve gereken seviye.
 ## device: sadece o cihaz menüdeyse görünür.
 const UPGRADES := {
-	"grill_slot": { "name": "Ekstra Izgara Yeri", "icon": "flame", "desc": "Izgaraya +1 pişirme yeri", "costs": [90, 180, 320, 480, 680, 900], "levels": [2, 4, 6, 8, 10, 12], "device": "izgara" },
-	"fryer_slot": { "name": "Ekstra Fritöz Sepeti", "icon": "cooking-pot", "desc": "Fritöze +1 sepet", "costs": [80, 200], "levels": [3, 6], "device": "fritoz" },
-	"oven_slot": { "name": "Ekstra Fırın Yeri", "icon": "flame", "desc": "Fırına +1 pişirme yeri", "costs": [160, 320], "levels": [4, 7], "device": "firin" },
-	"grill_speed": { "name": "Güçlü Izgara", "icon": "zap", "desc": "Izgara %15 daha hızlı pişirir", "costs": [70, 150, 280], "levels": [2, 4, 7], "device": "izgara" },
-	"fryer_speed": { "name": "Güçlü Fritöz", "icon": "trending-up", "desc": "Fritöz %15 daha hızlı pişirir", "costs": [60, 140, 260], "levels": [3, 5, 8], "device": "fritoz" },
-	"tables": { "name": "Yeni Masalar", "icon": "armchair", "desc": "Salona +2 masa", "costs": [120], "levels": [3] },
-	"comfort": { "name": "Müzik ve Dekor", "icon": "music", "desc": "Müşteriler %12 daha sabırlı", "costs": [60, 130, 250], "levels": [2, 5, 8] },
-	"register2": { "name": "Ek Kasa", "icon": "receipt", "desc": "İkinci kasa: kasiyer tutunca sıra ikiye bölünür", "costs": [250], "levels": [3] },
+	"grill_slot": { "name": "Ekstra Izgara Yeri", "icon": "flame", "desc": "Izgaraya +1 pişirme yeri", "costs": [270, 540, 960, 1440, 2040, 2700], "levels": [2, 4, 6, 8, 10, 12], "device": "izgara" },
+	"fryer_slot": { "name": "Ekstra Fritöz Sepeti", "icon": "cooking-pot", "desc": "Fritöze +1 sepet", "costs": [240, 600], "levels": [3, 6], "device": "fritoz" },
+	"oven_slot": { "name": "Ekstra Fırın Yeri", "icon": "flame", "desc": "Fırına +1 pişirme yeri", "costs": [480, 960], "levels": [4, 7], "device": "firin" },
+	"grill_speed": { "name": "Güçlü Izgara", "icon": "zap", "desc": "Izgara %15 daha hızlı pişirir", "costs": [210, 450, 840], "levels": [2, 4, 7], "device": "izgara" },
+	"fryer_speed": { "name": "Güçlü Fritöz", "icon": "trending-up", "desc": "Fritöz %15 daha hızlı pişirir", "costs": [180, 420, 780], "levels": [3, 5, 8], "device": "fritoz" },
+	"tables": { "name": "Yeni Masalar", "icon": "armchair", "desc": "Salona +2 masa", "costs": [360], "levels": [3] },
+	"comfort": { "name": "Müzik ve Dekor", "icon": "music", "desc": "Müşteriler %12 daha sabırlı", "costs": [180, 390, 750], "levels": [2, 5, 8] },
+	"register2": { "name": "Ek Kasa", "icon": "receipt", "desc": "İkinci kasa: kasiyer tutunca sıra ikiye bölünür", "costs": [750], "levels": [3] },
+	# Genişletmeler (EXPANSIONS): dükkan büyür, masa ve müşteri artar, kira da artar.
+	"annex": { "name": "Yan Salon", "icon": "store", "desc": "Sol duvar yıkılır, yan dükkan salona katılır: +3 masa, daha çok müşteri", "costs": [2400], "levels": [4], "rent": 60 },
+	"garden": { "name": "Bahçe Teras", "icon": "sprout", "desc": "Sağ duvar açılır, pergolalı bahçeye şemsiyeli masalar: +3 masa, daha sabırlı müşteri", "costs": [4200], "levels": [6], "rent": 90 },
 }
+## Geliştirmeler sayfasında "Dükkanı Büyüt" başlığı altında gösterilenler.
+const EXPANSIONS := ["annex", "garden"]
+## Her genişletme içeride aynı anda bulunabilecek müşteriyi artırır, geliş aralığını kısaltır.
+const EXPANSION_CUSTOMERS := 2
+const EXPANSION_SPAWN := 0.88
+
+## Günlük sabit giderler (gün sonunda maaşlardan sonra ödenir).
+const RENT_BASE := 40
+const RENT_PER_LEVEL := 10
+## Faturalar: menüdeki her pişirme cihazı ve her ek pişirme yeri için.
+const BILL_PER_DEVICE := 12
+const BILL_PER_SLOT := 5
+const BILL_REGISTER2 := 15
 
 const BASE_GRILL_SLOTS := 3
 const BASE_FRYER_SLOTS := 2
@@ -74,6 +90,28 @@ const CALM_PATIENCE_FACTOR := 1.4
 const CALM_MAX_CUSTOMERS := 3
 
 
+## Alınmış genişletme sayısı.
+static func expansions() -> int:
+	var n := 0
+	for id in EXPANSIONS:
+		n += GameState.upgrade_level(id)
+	return n
+
+
+## Günün kira ve faturası: { rent, bills }
+static func daily_costs() -> Dictionary:
+	var rent := RENT_BASE + RENT_PER_LEVEL * (GameState.level - 1)
+	for id in EXPANSIONS:
+		if GameState.upgrade_level(id) > 0:
+			rent += int(UPGRADES[id]["rent"])
+	var bills := BILL_PER_DEVICE * GameState.menu_devices().size()
+	for id in ["grill_slot", "fryer_slot", "oven_slot"]:
+		bills += BILL_PER_SLOT * GameState.upgrade_level(id)
+	if GameState.upgrade_level("register2") > 0:
+		bills += BILL_REGISTER2
+	return { "rent": rent, "bills": bills }
+
+
 static func calm() -> bool:
 	return GameState.staff.is_empty()
 
@@ -83,7 +121,7 @@ static func calm() -> bool:
 static func max_customers(level: int) -> int:
 	if calm():
 		return CALM_MAX_CUSTOMERS
-	return mini(5 + (level - 1) / 2 + maxi(level - 8, 0), 14)
+	return mini(5 + (level - 1) / 2 + maxi(level - 8, 0), 14) + EXPANSION_CUSTOMERS * expansions()
 
 
 ## Aynı anda açık olabilecek en fazla sipariş (mutfakta hazırlanan + teslim
@@ -146,7 +184,7 @@ static func delivery_order(level: int) -> Dictionary:
 
 ## Yeni müşteri gelme aralığı (saniye). İyi puan müşteriyi sıklaştırır.
 static func spawn_interval(level: int, rating: float) -> float:
-	var base := maxf(5.0, 18.0 - 0.8 * (level - 1))
+	var base := maxf(5.0, 18.0 - 0.8 * (level - 1)) * pow(EXPANSION_SPAWN, expansions())
 	if calm():
 		base *= CALM_SPAWN_FACTOR
 	return base * lerpf(1.4, 0.8, clampf((rating - 1.0) / 4.0, 0.0, 1.0)) * price_demand()
@@ -156,7 +194,8 @@ static func patience(level: int, item_count: int, comfort_level: int) -> float:
 	var base := maxf(45.0, 80.0 - 2.5 * (level - 1)) + 14.0 * item_count
 	if calm():
 		base *= CALM_PATIENCE_FACTOR
-	return base * (1.0 + 0.12 * comfort_level)
+	# Bahçe teras: açık havada beklemek daha keyifli (+%10 sabır)
+	return base * (1.0 + 0.12 * comfort_level) * (1.1 if GameState.upgrade_level("garden") > 0 else 1.0)
 
 
 ## Kasadaki tek yerin arkasında sırada bekleyebilecek en fazla kişi

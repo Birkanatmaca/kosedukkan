@@ -66,6 +66,7 @@ var _level_label: Label
 var _xp_bar: ProgressBar
 var _market_tabs: Array[Button] = []
 var _market_pages: Array[Control] = []
+var _rent_label: Label
 var _upgrade_rows := {}
 var _staff_list: VBoxContainer
 var _nav_row: HBoxContainer
@@ -646,7 +647,7 @@ func _on_day_ended(stats: Dictionary) -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 44)
 	v.add_child(title)
-	var expenses: int = stats["supplies"] + stats["upgrades"] + stats["wages"]
+	var expenses: int = stats["supplies"] + stats["upgrades"] + stats["wages"] + int(stats.get("rent", 0))
 	var net: int = stats["revenue"] + stats["tips"] + int(stats.get("quests", 0)) + int(stats.get("gifts", 0)) - expenses
 	var lines := [
 		["smile", "Servis edilen müşteri", "%d" % stats["served"], C_TEXT],
@@ -657,6 +658,7 @@ func _on_day_ended(stats: Dictionary) -> void:
 		["package", "Malzeme", "-₺%d" % stats["supplies"], C_TEXT],
 		["circle-arrow-up", "Geliştirme", "-₺%d" % stats["upgrades"], C_TEXT],
 		["users", "Maaşlar", "-₺%d" % stats["wages"], C_TEXT],
+		["store", "Kira ve faturalar", "-₺%d" % int(stats.get("rent", 0)), C_TEXT],
 	]
 	for line in lines:
 		v.add_child(_summary_row(line[1], line[2], line[3], 26, line[0]))
@@ -988,7 +990,26 @@ func _build_upgrades_page() -> Control:
 	list.add_theme_constant_override("separation", 10)
 	scroll.add_child(list)
 
+	# Dükkanı büyüt: genişletmeler ve günlük kira/fatura özeti
+	var expand_title := HBoxContainer.new()
+	expand_title.add_theme_constant_override("separation", 8)
+	expand_title.add_child(UiKit.icon_rect("store", UiKit.ORANGE, 28))
+	expand_title.add_child(UiKit.label("Dükkanı Büyüt", 25, UiKit.TEXT, 900))
+	list.add_child(expand_title)
+	_rent_label = UiKit.label("", 19, C_MUTED)
+	_rent_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	list.add_child(_rent_label)
+	var ids: Array = Progression.EXPANSIONS.duplicate()
 	for id in Progression.UPGRADES:
+		if not ids.has(id):
+			ids.append(id)
+	for id in ids:
+		if id == ids[Progression.EXPANSIONS.size()]:
+			var t := HBoxContainer.new()
+			t.add_theme_constant_override("separation", 8)
+			t.add_child(UiKit.icon_rect("circle-arrow-up", UiKit.ORANGE, 28))
+			t.add_child(UiKit.label("Ekipman ve Salon", 25, UiKit.TEXT, 900))
+			list.add_child(t)
 		var data: Dictionary = Progression.UPGRADES[id]
 		var row := PanelContainer.new()
 		row.add_theme_stylebox_override("panel", UiKit.card_style())
@@ -1009,7 +1030,10 @@ func _build_upgrades_page() -> Control:
 		desc.text = data["desc"]
 		desc.add_theme_color_override("font_color", C_MUTED)
 		desc.add_theme_font_size_override("font_size", 20)
+		desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		info.add_child(desc)
+		if data.has("rent"):
+			desc.text += "  (kira +₺%d/gün)" % data["rent"]
 		var tier := Label.new()
 		tier.add_theme_color_override("font_color", Color("#8a6cf0"))
 		tier.add_theme_font_size_override("font_size", 20)
@@ -1030,6 +1054,9 @@ func _buy_upgrade(id: String) -> void:
 
 
 func _refresh_upgrades() -> void:
+	if _rent_label:
+		var costs := Progression.daily_costs()
+		_rent_label.text = "Günlük kira ₺%d + faturalar ₺%d, gün sonunda ödenir. Dükkan büyüdükçe kira artar ama masa ve müşteri de artar." % [costs["rent"], costs["bills"]]
 	for id in _upgrade_rows:
 		var btn: Button = _upgrade_rows[id]["button"]
 		var tier: Label = _upgrade_rows[id]["tier"]

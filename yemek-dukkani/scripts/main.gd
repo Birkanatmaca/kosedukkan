@@ -26,7 +26,11 @@ const SHOP_CAMS := [
 	["Salon", Vector3(-4.9, 2.9, -9.4), Vector3(0.8, 0.9, -0.2)],
 	["Köşe", Vector3(5.1, 3.4, 1.0), Vector3(-1.2, 0.6, -5.8)],
 	["Kasa", Vector3(0.3, 2.0, 2.7), Vector3(0.1, 1.0, -0.6)],
+	["Yan Salon", Vector3(-8.6, 3.6, 3.4), Vector3(-9.0, 0.6, -4.8)],
+	["Bahçe", Vector3(8.6, 3.6, 3.4), Vector3(9.0, 0.6, -4.8)],
 ]
+## Bu açılar ancak ilgili genişletme alınınca kamera sırasına girer.
+const SHOP_CAM_UPGRADE := { "Yan Salon": "annex", "Bahçe": "garden" }
 const KITCHEN_CAM_NAMES := { "": "Genel", "izgara": "Izgara", "fritoz": "Fritöz", "firin": "Fırın" }
 ## Dükkandaki kamera açısının sırası (SHOP_CAMS)
 var shop_cam := 0
@@ -163,7 +167,11 @@ func cycle_camera() -> void:
 		return
 	match screen:
 		SHOP:
-			_set_shop_cam((shop_cam + 1) % SHOP_CAMS.size())
+			var next := (shop_cam + 1) % SHOP_CAMS.size()
+			while next != 0 and SHOP_CAM_UPGRADE.has(SHOP_CAMS[next][0]) \
+					and GameState.upgrade_level(SHOP_CAM_UPGRADE[SHOP_CAMS[next][0]]) == 0:
+				next = (next + 1) % SHOP_CAMS.size()
+			_set_shop_cam(next)
 		KITCHEN:
 			var views: Array[String] = [""]
 			for device in ["izgara", "fritoz", "firin"]:

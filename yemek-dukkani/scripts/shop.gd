@@ -77,6 +77,14 @@ const TABLES := [
 	Vector3(-2.5, 0, -5.3), Vector3(2.5, 0, -5.3),
 	Vector3(-2.5, 0, -7.6), Vector3(2.5, 0, -7.6),
 ]
+## Genişletmeler: sol duvar yıkılıp Yan Salon, sağ duvar açılıp Bahçe Teras olur.
+## Yan duvardaki geçidin z aralığı ve yüksekliği; dış kenarlar.
+const OPENING_Z := [-8.6, -1.6]
+const OPENING_TOP := 3.0
+const ANNEX_X := -12.2
+const GARDEN_X := 12.2
+const ANNEX_TABLES := [Vector3(-8.9, 0, -3.0), Vector3(-8.9, 0, -5.3), Vector3(-8.9, 0, -7.6)]
+const GARDEN_TABLES := [Vector3(8.9, 0, -3.0), Vector3(8.9, 0, -5.3), Vector3(8.9, 0, -7.6)]
 ## Masanın merkezinden sandalyeye uzaklık (x ekseninde).
 const SEAT_OFFSET := 0.85
 ## Masaya yaklaşırken kullanılan, masaların önündeki boş şerit.
@@ -110,7 +118,7 @@ var _cashier_deliver_timer := 0.0
 ## Her masa: { "pos", "customer", "dirty", "tray", "cleaner", "mark" }. Bir masada tek müşteri oturur.
 var tables: Array[Dictionary] = []
 ## Masa ucunda ayakta bekleyenler (TABLES ile aynı sırada; boşsa null)
-var standing: Array = [null, null, null, null, null, null]
+var standing: Array = []
 ## Açık siparişler (fişler): { number, customer, items, filled: {ürün: [kalite]}, ready }
 var orders: Array[Dictionary] = []
 ## Teslim alanında bekleyenler (PICKUP_WAIT ile aynı sırada; boşsa null)
@@ -158,6 +166,13 @@ var _glass_mat: StandardMaterial3D
 var _door: Node3D
 var _door_open := false
 var _street := Street.new()
+## Yan duvarlar: side (-1 sol, 1 sağ) -> [kapalı, açık]
+var _side_walls := {}
+var _annex: Node3D
+var _garden: Node3D
+## Tavanla birlikte gizlenen ek tavanlar (Yan Salon)
+var _extra_ceilings: Array[Node3D] = []
+var _expansions_synced := false
 
 
 func _ready() -> void:
@@ -488,7 +503,7 @@ func _pick_up(customer: ShopCustomer, tray: Node3D) -> void:
 	# Açık masaların ucundaki boş bekleme yerlerinden birine gider.
 	var spot := -1
 	for i in tables.size():
-		if standing[i] == null:
+		if i < standing.size() and standing[i] == null:
 			spot = i
 			break
 	if spot == -1:
@@ -501,7 +516,7 @@ func _pick_up(customer: ShopCustomer, tray: Node3D) -> void:
 
 ## i. masanın ucundaki ayakta bekleme noktası (masanın dış yanında, önünde).
 func stand_spot(i: int) -> Vector3:
-	var pos: Vector3 = TABLES[i]
+	var pos: Vector3 = tables[i]["pos"] if i < tables.size() else TABLES[mini(i, TABLES.size() - 1)]
 	return pos + Vector3(signf(pos.x) * STAND_OFFSET.x, 0, STAND_OFFSET.z)
 
 
@@ -868,12 +883,161 @@ func _release_spot(customer: ShopCustomer) -> void:
 ## Masa sayısı: kurulumda alınanlar + "Yeni Masalar" geliştirmesi.
 ## Kurulumda masa azaltılabildiği için fazlalar kaldırılır.
 func _sync_tables() -> void:
+	_sync_expansions()
+	var want := table_positions()
+	for table in tables.duplicate():
+		if not want.has(table["pos"]):
+			tables.erase(table)
+			(table["root"] as Node3D).queue_free()
+	for pos in want:
+		if not tables.any(func(t: Dictionary) -> bool: return t["pos"] == pos):
+			_build_table(pos)
+	if standing.size() < tables.size():
+		var old := standing.size()
+		standing.resize(tables.size())
+		for i in range(old, standing.size()):
+			standing[i] = null
+
+
+## Açık masaların yerleri: salon (kurulum + Yeni Masalar), Yan Salon ve Bahçe.
+static func table_positions() -> Array:
+	var list: Array = []
 	var count := mini(GameState.decor["tables"] + 2 * GameState.upgrade_level("tables"), TABLES.size())
-	while tables.size() > count:
-		var table: Dictionary = tables.pop_back()
-		(table["root"] as Node3D).queue_free()
-	while tables.size() < count:
-		_build_table(TABLES[tables.size()])
+	for i in count:
+		list.append(TABLES[i])
+	if GameState.upgrade_level("annex") > 0:
+		list.append_array(ANNEX_TABLES)
+	if GameState.upgrade_level("garden") > 0:
+		list.append_array(GARDEN_TABLES)
+	return list
+
+
+## Genişletmeye göre yan duvarı açar, ek salonu / bahçeyi gösterir.
+func _sync_expansions() -> void:
+	var annex := GameState.upgrade_level("annex") > 0
+	var garden := GameState.upgrade_level("garden") > 0
+	for side in _side_walls:
+		var open := annex if side < 0 else garden
+		(_side_walls[side][0] as Node3D).visible = not open
+		(_side_walls[side][1] as Node3D).visible = open
+	if _expansions_synced:
+		if not _annex.visible and annex:
+			_pop_in(_annex)
+		if not _garden.visible and garden:
+			_pop_in(_garden)
+	_expansions_synced = true
+	_annex.visible = annex
+	_garden.visible = garden
+	_street.set_side_open(-1, annex)
+	_street.set_side_open(1, garden)
+
+
+## Yeni açılan bölüm aşağıdan yükselerek belirir.
+func _pop_in(node: Node3D) -> void:
+	node.position.y = -4.6
+	node.create_tween().tween_property(node, "position:y", 0.0, 0.8).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	Sfx.play("level_up", 0.0, Main.SHOP)
+
+
+## Yan Salon: solda yan dükkan; aynı zemin ve duvar boyası, arka duvarda
+## sokağa bakan vitrin, dış duvarda iki pencere, tavanda lamba.
+func _build_annex() -> void:
+	_annex = Node3D.new()
+	_annex.visible = false
+	add_child(_annex)
+	var x0 := ANNEX_X
+	var x1 := -6.0
+	var cx := (x0 + x1) / 2.0
+	var w := x1 - x0
+	_annex.add_child(Util.box(Vector3(w, 0.1, 12.3), _floor_mat, Vector3(cx, -0.04, -3.95)))
+	var ceiling := Util.no_shadow(Util.box(Vector3(w, 0.1, 12.3), Color("#fbf3e6"), Vector3(cx, 4.5, -3.95)))
+	_annex.add_child(ceiling)
+	_extra_ceilings.append(ceiling)
+	# Arka duvar (sokak tarafı): ortada vitrin
+	var shop_window := [cx - 1.3, cx + 1.3, BACK_WINDOW_BOTTOM, BACK_WINDOW_BOTTOM + BACK_WINDOW_SIZE.y]
+	_wall(true, -10.1, x0, x1, 4.5, 0.2, _wall_mat, [shop_window], _annex)
+	_wall(true, -10.08, x0, x1, 1.0, 0.22, _panel_mat, [shop_window], _annex)
+	_window(Vector3(cx, BACK_WINDOW_BOTTOM, -10.1), Vector2(2.6, BACK_WINDOW_SIZE.y), 0.0, _annex)
+	# Dış duvar: iki pencere
+	var holes := []
+	for z: float in SIDE_WINDOW_Z:
+		holes.append([z - SIDE_WINDOW_SIZE.x / 2, z + SIDE_WINDOW_SIZE.x / 2, WINDOW_BOTTOM, WINDOW_BOTTOM + SIDE_WINDOW_SIZE.y])
+	_wall(false, x0, -10.2, 2.2, 4.5, 0.2, _side_mat, holes, _annex)
+	_annex.add_child(Util.no_shadow(Util.box(Vector3(0.22, 1.0, 12.4), _panel_mat, Vector3(x0 + 0.01, 0.5, -4.0))))
+	for z: float in SIDE_WINDOW_Z:
+		_window(Vector3(x0, WINDOW_BOTTOM, z), SIDE_WINDOW_SIZE, 90.0, _annex)
+	# Dış duvarın üstü (arka duvarla birleşen köşe)
+	for z in [-5.3]:
+		var hanging := Util.model("lighting/tavan_lambasi", Vector3(cx, 3.62, z), 0.0, 1.2)
+		_annex.add_child(hanging)
+		_ceiling_lamps.append(hanging)
+		var bulb := Util.sphere(0.08, Color("#ffd27a"), Vector3(cx, 3.66, z))
+		_annex.add_child(bulb)
+		_bulbs.append(bulb)
+	var lamp := OmniLight3D.new()
+	lamp.position = Vector3(cx, 3.4, -5.0)
+	lamp.light_color = Color("#ffd9a0")
+	lamp.omni_range = 7.5
+	_annex.add_child(lamp)
+	_lamps.append(lamp)
+	# Köşelerde bitki
+	for pos in [Vector3(x0 + 0.6, 0, -9.4), Vector3(x0 + 0.6, 0, 1.4)]:
+		_annex.add_child(Util.cylinder(0.25, 0.5, Color("#c0703f"), pos + Vector3(0, 0.25, 0)))
+		_annex.add_child(Util.sphere(0.42, Color("#4f9a52"), pos + Vector3(0, 0.85, 0)))
+
+
+## Bahçe Teras: sağda ahşap zemin, alçak çit ve çiçek saksıları, üstte pergola
+## ve ampul zinciri. Masalarda şemsiye var (_build_table).
+func _build_garden() -> void:
+	_garden = Node3D.new()
+	_garden.visible = false
+	add_child(_garden)
+	var x0 := 6.0
+	var x1 := GARDEN_X
+	var cx := (x0 + x1) / 2.0
+	var w := x1 - x0
+	var deck := Util.tile_material(Color("#b98552"), Color("#a9784a"), 0.9)
+	_garden.add_child(Util.box(Vector3(w, 0.12, 11.6), deck, Vector3(cx, -0.02, -4.2)))
+	var wood := Color("#7a4b32")
+	# Alçak çit: dış kenarda ve önde/arkada
+	for z in range(-10, 2):
+		_garden.add_child(Util.box(Vector3(0.08, 0.8, 0.08), Color("#f4efe6"), Vector3(x1 - 0.1, 0.4, z + 0.4)))
+	for y in [0.3, 0.65]:
+		_garden.add_child(Util.box(Vector3(0.05, 0.08, 11.6), Color("#f4efe6"), Vector3(x1 - 0.1, y, -4.2)))
+		for z in [-9.95, 1.55]:
+			_garden.add_child(Util.box(Vector3(w, 0.08, 0.05), Color("#f4efe6"), Vector3(cx, y, z)))
+	# Pergola: köşelerde dikmeler, üstte kirişler
+	for px in [x0 + 0.3, x1 - 0.3]:
+		for pz in [-9.7, -4.2, 1.3]:
+			_garden.add_child(Util.box(Vector3(0.16, 3.2, 0.16), wood, Vector3(px, 1.6, pz)))
+		_garden.add_child(Util.box(Vector3(0.14, 0.18, 11.4), wood, Vector3(px, 3.25, -4.2)))
+	for i in 9:
+		_garden.add_child(Util.no_shadow(Util.box(Vector3(w - 0.4, 0.1, 0.1), wood.lightened(0.1), Vector3(cx, 3.38, -9.6 + i * 1.36))))
+	# Ampul zinciri: pergolanın altında, iki sıra
+	var colors := [Color("#ffd166"), Color("#fff1c4"), Color("#ff9f43")]
+	for row in [x0 + 1.4, x1 - 1.4]:
+		for i in 23:
+			var z := -9.6 + i * 0.5
+			var y := 3.05 - 0.15 * absf(sin(z / 1.8 * PI))
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = colors[i % colors.size()]
+			mat.emission_enabled = true
+			mat.emission = colors[i % colors.size()]
+			mat.emission_energy_multiplier = 1.4
+			_garden.add_child(Util.no_shadow(Util.sphere(0.05, mat, Vector3(row, y, z))))
+	var glow := OmniLight3D.new()
+	glow.position = Vector3(cx, 2.8, -4.5)
+	glow.light_color = Color("#ffe1a8")
+	glow.omni_range = 7.0
+	glow.light_energy = 0.6
+	_garden.add_child(glow)
+	# Çiçek saksıları çitin önünde
+	var petals := [Color("#ff7aa2"), Color("#ffd166"), Color("#c77dff"), Color("#ff9f43")]
+	for z in [-8.6, -6.4, -4.2, -1.9, 0.4]:
+		_garden.add_child(Util.box(Vector3(0.45, 0.4, 0.9), Color("#c0703f"), Vector3(x1 - 0.45, 0.2, z)))
+		for k in 3:
+			_garden.add_child(Util.no_shadow(Util.sphere(0.16, Color("#4f9a52"), Vector3(x1 - 0.45, 0.48, z - 0.3 + k * 0.3))))
+			_garden.add_child(Util.no_shadow(Util.sphere(0.08, petals[(k + int(z)) % petals.size()], Vector3(x1 - 0.42, 0.6, z - 0.28 + k * 0.3))))
 
 
 # --- Kirli masalar ------------------------------------------------------------
@@ -1407,18 +1571,38 @@ func _build_room() -> void:
 	var side_holes := []
 	for z: float in SIDE_WINDOW_Z:
 		side_holes.append([z - SIDE_WINDOW_SIZE.x / 2, z + SIDE_WINDOW_SIZE.x / 2, WINDOW_BOTTOM, WINDOW_BOTTOM + SIDE_WINDOW_SIZE.y])
+	# Her yan duvarın iki hali var: kapalı (pencereli) ve genişletme alınınca
+	# açılan geniş geçitli hali (_sync_expansions).
 	for side in [-1.0, 1.0]:
 		var x: float = side * 6.0
-		_wall(false, x, -10.0, 2.2, 4.5, 0.2, _side_mat, side_holes)
-		add_child(Util.no_shadow(Util.box(Vector3(0.22, 1.0, 12.2), _panel_mat, Vector3(x - side * 0.01, 0.5, -3.9))))
+		var closed := Node3D.new()
+		add_child(closed)
+		var opened := Node3D.new()
+		opened.visible = false
+		add_child(opened)
+		_side_walls[int(side)] = [closed, opened]
+		_wall(false, x, -10.0, 2.2, 4.5, 0.2, _side_mat, side_holes, closed)
+		closed.add_child(Util.no_shadow(Util.box(Vector3(0.22, 1.0, 12.2), _panel_mat, Vector3(x - side * 0.01, 0.5, -3.9))))
 		for z: float in SIDE_WINDOW_Z:
-			_window(Vector3(x, WINDOW_BOTTOM, z), SIDE_WINDOW_SIZE, -side * 90.0)
+			_window(Vector3(x, WINDOW_BOTTOM, z), SIDE_WINDOW_SIZE, -side * 90.0, closed)
+		# Geniş geçit: üstte ahşap kiriş, iki yanında dikme
+		var gap := [OPENING_Z[0], OPENING_Z[1], 0.0, OPENING_TOP]
+		_wall(false, x, -10.0, 2.2, 4.5, 0.2, _side_mat, [gap], opened)
+		for span in [[-10.0, OPENING_Z[0]], [OPENING_Z[1], 2.2]]:
+			var length: float = span[1] - span[0]
+			opened.add_child(Util.no_shadow(Util.box(Vector3(0.22, 1.0, length), _panel_mat, Vector3(x - side * 0.01, 0.5, (span[0] + span[1]) / 2.0))))
+		var length_open: float = OPENING_Z[1] - OPENING_Z[0]
+		opened.add_child(Util.box(Vector3(0.34, 0.26, length_open + 0.3), Color("#8a5a3a"), Vector3(x, OPENING_TOP + 0.13, (OPENING_Z[0] + OPENING_Z[1]) / 2.0)))
+		for z: float in OPENING_Z:
+			opened.add_child(Util.box(Vector3(0.34, OPENING_TOP, 0.26), Color("#8a5a3a"), Vector3(x, OPENING_TOP / 2.0, z)))
 		# Pencerelerin arasında duvar aplikleri (lambalar alınınca takılır)
 		for z in [-1.4, -4.7, -8.1]:
 			var sconce := Util.model("lighting/duvar_lambasi", Vector3(x - side * 0.1, 2.3, z), -side * 90.0, 1.2)
-			add_child(sconce)
+			(self if z > OPENING_Z[1] else closed).add_child(sconce)
 			_sconces.append(sconce)
 
+	_build_annex()
+	_build_garden()
 	_build_ruin()
 	_build_rugs()
 	_build_ornaments()
@@ -1557,6 +1741,8 @@ func _apply_decor() -> void:
 		for table in tables:
 			_set_table_top(table)
 	_ceiling.visible = GameState.setup_done and not _ceiling_open
+	for c in _extra_ceilings:
+		c.visible = _ceiling.visible
 	_sync_tables()
 
 
@@ -1564,6 +1750,8 @@ func _apply_decor() -> void:
 func set_ceiling_open(open: bool) -> void:
 	_ceiling_open = open
 	_ceiling.visible = GameState.setup_done and not open
+	for c in _extra_ceilings:
+		c.visible = _ceiling.visible
 	for lamp in _ceiling_lamps:
 		lamp.visible = not open
 	for bulb in _bulbs:
@@ -1574,7 +1762,9 @@ func set_ceiling_open(open: bool) -> void:
 ## along_x: duvar x ekseni boyunca uzanır (arka duvar), değilse z boyunca (yan duvar).
 ## fixed: duvarın sabit ekseni (z ya da x), u0..u1 uzunluk, height yükseklik.
 ## holes: [u0, u1, alt, üst] listesi.
-func _wall(along_x: bool, fixed: float, u0: float, u1: float, height: float, thickness: float, look, holes: Array) -> void:
+func _wall(along_x: bool, fixed: float, u0: float, u1: float, height: float, thickness: float, look, holes: Array, parent: Node3D = null) -> void:
+	if parent == null:
+		parent = self
 	var cuts := [u0, u1]
 	for hole in holes:
 		cuts.append_array([hole[0], hole[1]])
@@ -1602,17 +1792,17 @@ func _wall(along_x: bool, fixed: float, u0: float, u1: float, height: float, thi
 			var y: float = (span[0] + span[1]) / 2.0
 			var size := Vector3(b - a, h, thickness) if along_x else Vector3(thickness, h, b - a)
 			var pos := Vector3(mid, y, fixed) if along_x else Vector3(fixed, y, mid)
-			add_child(Util.no_shadow(Util.box(size, look, pos)))
+			parent.add_child(Util.no_shadow(Util.box(size, look, pos)))
 
 
 ## Gerçekçi pencere: duvar kalınlığını saran beyaz pervaz, iç ve dış denizlik,
 ## ortada kayıt ve üstte vasistas, şeffaf cam. pos: pencerenin alt ortası.
 ## yaw: yerel +z salonun içine baksın diye dönüş (arka duvar 0, yan duvarlar ±90).
-func _window(pos: Vector3, size: Vector2, yaw: float) -> void:
+func _window(pos: Vector3, size: Vector2, yaw: float, parent: Node3D = null) -> void:
 	var root := Node3D.new()
 	root.position = pos
 	root.rotation_degrees.y = yaw
-	add_child(root)
+	(parent if parent else self).add_child(root)
 	var white := _frame_mat
 	var t := 0.08
 	var depth := 0.26
@@ -1710,6 +1900,20 @@ func _build_table(pos: Vector3) -> void:
 
 	for side in [-1.0, 1.0]:
 		_build_chair(root, Vector3(side * SEAT_OFFSET, 0, 0), side)
+	if pos.x > 6.0:
+		# Bahçe masası: ortasında şemsiye
+		root.add_child(Util.cylinder(0.03, 2.3, Color("#e9e4dc"), Vector3(0, 1.15, 0.15)))
+		var canopy := MeshInstance3D.new()
+		var cone := CylinderMesh.new()
+		cone.top_radius = 0.04
+		cone.bottom_radius = 1.25
+		cone.height = 0.45
+		cone.radial_segments = 8
+		canopy.mesh = cone
+		canopy.material_override = Util.material([Color("#e8553e"), Color("#f4efe6"), Color("#3f8f6a")][int(-pos.z / 2.3) % 3])
+		canopy.position = Vector3(0, 2.35, 0.15)
+		canopy.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		root.add_child(canopy)
 
 	# Kirliyken üstünde süngerli işaret çıkar; dokununca temizlenir.
 	var mark := Icons.sprite(Icons.badge("spray-can", UiKit.BLUE), 1.95)
