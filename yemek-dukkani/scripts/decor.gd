@@ -79,6 +79,19 @@ const STYLES := {
 		{ "name": "Çizgili Tente", "price": 750, "color": Color("#d6452f") },
 		{ "name": "Ahşap Pergola", "price": 1100, "color": Color("#7a4b32") },
 	] },
+	# Çatı terası (Geliştir › Çatı Terası inşa edilince)
+	"roof_floor": { "name": "Teras Zemini", "icon": "grid-3x3", "key": "roof_floor", "roof": true, "options": [
+		{ "name": "Ahşap Deck", "price": 0, "color": Color("#b98552") },
+		{ "name": "Terracotta", "price": 380, "color": Color("#c2693e") },
+		{ "name": "Suni Çim", "price": 420, "color": Color("#79b85a") },
+		{ "name": "Beyaz Taş", "price": 480, "color": Color("#ece7de") },
+	] },
+	"roof_shade": { "name": "Teras Gölgeliği", "icon": "sun", "key": "roof_shade", "roof": true, "options": [
+		{ "name": "Yok", "price": 0, "color": Color("#c9c4bb") },
+		{ "name": "Şemsiyeler", "price": 480, "color": Color("#e8553e") },
+		{ "name": "Sarmaşık Pergola", "price": 1100, "color": Color("#7a4b32") },
+		{ "name": "Yelken Gölgelik", "price": 850, "color": Color("#f3efe6") },
+	] },
 }
 ## Süsler: bir kez alınır, sonra açılıp kapatılabilir.
 const ORNAMENTS := {
@@ -90,8 +103,14 @@ const ORNAMENTS := {
 	"board": { "name": "Menü Panosu", "icon": "clipboard-list", "desc": "Kapı yanında kara tahta", "price": 130 },
 	"patio_lights": { "name": "Bahçe Işıkları", "icon": "sparkles", "desc": "Bahçenin üstünde sarı ampul zinciri", "price": 280, "patio": true },
 	"patio_lanterns": { "name": "Fener Direkleri", "icon": "lamp-ceiling", "desc": "Bahçenin köşelerinde sokak fenerleri", "price": 240, "patio": true },
-	"patio_plants": { "name": "Bahçe Saksıları", "icon": "sprout", "desc": "Kaldırım kenarında çiçekli saksılar", "price": 200, "patio": true },
+	"patio_plants": { "name": "Bahçe Saksıları", "icon": "sprout", "desc": "Zeytin ağaçları, vitrin altında çiçekler, lavantalar", "price": 200, "patio": true },
+	"roof_lights": { "name": "Teras Işıkları", "icon": "sparkles", "desc": "Terasın üstünde çapraz ampul zincirleri", "price": 320, "roof": true },
+	"roof_plants": { "name": "Teras Bahçesi", "icon": "sprout", "desc": "Çiçek kasaları, zeytin ağaçları, lavanta", "price": 300, "roof": true },
+	"roof_lounge": { "name": "Oturma Köşesi", "icon": "armchair", "desc": "Minderli L sedir, kilim ve çay sehpası", "price": 550, "roof": true },
 }
+## Teras masası: adet başı fiyat ve en fazla adet.
+const ROOF_TABLE_PRICE := 380
+const MAX_ROOF_TABLES := 6
 ## Ön bahçe masası: adet başı fiyat ve en fazla adet (müşteriler oturur).
 const PATIO_TABLE_PRICE := 320
 const MAX_PATIO_TABLES := 4
@@ -108,6 +127,7 @@ static func default_state() -> Dictionary:
 		"paint_color": 0, "floor": 0, "tables": 0, "plants": 0,
 		"rug": 0, "door": 0, "window_style": 0, "table_style": 0,
 		"patio_floor": 0, "patio_shade": 0, "patio_tables": 0,
+		"roof_floor": 0, "roof_shade": 0, "roof_tables": 0,
 		## Alınan seçenekler ("door:2", "paint:3", "floor:1"...) ve süsler
 		"owned": [], "ornaments": [], "ornaments_off": [],
 	}
@@ -195,7 +215,7 @@ static func patience_bonus(decor: Dictionary) -> float:
 	if decor["windows"]:
 		bonus += 0.03
 	bonus += 0.02 * decor["plants"]
-	bonus += 0.02 * style_points(decor) + 0.01 * int(decor.get("patio_tables", 0))
+	bonus += 0.02 * style_points(decor) + 0.01 * (int(decor.get("patio_tables", 0)) + int(decor.get("roof_tables", 0)))
 	return minf(bonus, 0.45)
 
 

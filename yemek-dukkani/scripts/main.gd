@@ -29,9 +29,10 @@ const SHOP_CAMS := [
 	["Sol Salon", Vector3(-12.0, 4.2, 4.2), Vector3(-12.0, 0.6, -4.8)],
 	["Sağ Salon", Vector3(12.0, 4.2, 4.2), Vector3(12.0, 0.6, -4.8)],
 	["Ön Bahçe", Vector3(0, 4.6, -17.6), Vector3(0, 0.9, -11.0)],
+	["Teras", Vector3(0, 10.8, 7.6), Vector3(0, 4.4, -4.4)],
 ]
 ## Bu açılar ancak ilgili genişletme alınınca kamera sırasına girer.
-const SHOP_CAM_UPGRADE := { "Sol Salon": "annex", "Sağ Salon": "annex_r" }
+const SHOP_CAM_UPGRADE := { "Sol Salon": "annex", "Sağ Salon": "annex_r", "Teras": "terrace" }
 const KITCHEN_CAM_NAMES := { "": "Genel", "izgara": "Izgara", "fritoz": "Fritöz", "firin": "Fırın" }
 ## Dükkandaki kamera açısının sırası (SHOP_CAMS)
 var shop_cam := 0

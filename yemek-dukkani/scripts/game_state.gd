@@ -191,6 +191,23 @@ func buy_patio_table() -> bool:
 	return true
 
 
+## Çatı terasına masa ekler. Döner: alındı mı.
+func buy_roof_table() -> bool:
+	if upgrade_level("terrace") == 0:
+		show_toast("Önce Geliştir'den Çatı Terası inşa et")
+		return false
+	if int(decor["roof_tables"]) >= Decor.MAX_ROOF_TABLES:
+		return false
+	if money < Decor.ROOF_TABLE_PRICE:
+		show_toast("Yeterli paran yok")
+		return false
+	money -= Decor.ROOF_TABLE_PRICE
+	day_stats["upgrades"] += Decor.ROOF_TABLE_PRICE
+	decor["roof_tables"] = int(decor["roof_tables"]) + 1
+	decor_changed.emit()
+	return true
+
+
 ## Masa ya da bitki sayısını değiştirir (adet başı fiyat, iadeli).
 func change_count(id: String, delta: int) -> void:
 	var price := Decor.TABLE_PRICE if id == "tables" else Decor.PLANT_PRICE

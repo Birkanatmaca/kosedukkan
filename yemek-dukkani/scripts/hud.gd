@@ -1015,14 +1015,18 @@ func _build_upgrades_page() -> Control:
 	_rent_label = UiKit.label("", 19, C_MUTED)
 	_rent_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	list.add_child(_rent_label)
-	var t := HBoxContainer.new()
-	t.add_theme_constant_override("separation", 8)
-	t.add_child(UiKit.icon_rect("circle-arrow-up", UiKit.ORANGE, 28))
-	t.add_child(UiKit.label("Ekipman ve Salon", 25, UiKit.TEXT, 900))
-	list.add_child(t)
+	# Önce Çatı Terası (dükkanı büyütür), sonra ekipman ve salon geliştirmeleri
+	var ids: Array = ["terrace"]
 	for id in Progression.UPGRADES:
-		if Progression.UPGRADES[id].get("hidden", false):
-			continue
+		if not Progression.UPGRADES[id].get("hidden", false) and id != "terrace":
+			ids.append(id)
+	for id in ids:
+		if id == ids[1]:
+			var t := HBoxContainer.new()
+			t.add_theme_constant_override("separation", 8)
+			t.add_child(UiKit.icon_rect("circle-arrow-up", UiKit.ORANGE, 28))
+			t.add_child(UiKit.label("Ekipman ve Salon", 25, UiKit.TEXT, 900))
+			list.add_child(t)
 		var data: Dictionary = Progression.UPGRADES[id]
 		var row := PanelContainer.new()
 		row.add_theme_stylebox_override("panel", UiKit.card_style())
@@ -1069,7 +1073,7 @@ func _buy_upgrade(id: String) -> void:
 func _refresh_upgrades() -> void:
 	if _rent_label:
 		var costs := Progression.daily_costs()
-		_rent_label.text = "Yanındaki komşu dükkan kapanınca Mahalle'den satın al, duvarı yıkıp salonuna kat (+6 masa). Günlük kira ₺%d + faturalar ₺%d, gün sonunda ödenir." % [costs["rent"], costs["bills"]]
+		_rent_label.text = "Çatıya teras kur ya da yanındaki komşu kapanınca Mahalle'den alıp duvarı yık (+6 masa). Günlük kira ₺%d + faturalar ₺%d, gün sonunda ödenir." % [costs["rent"], costs["bills"]]
 	for id in _upgrade_rows:
 		var btn: Button = _upgrade_rows[id]["button"]
 		var tier: Label = _upgrade_rows[id]["tier"]
@@ -1980,9 +1984,7 @@ func _place_walk_button() -> void:
 			_walk_btn.text = "Mahalle"
 			UiKit.candy(_walk_btn, UiKit.CARD, UiKit.TEXT)
 	if _walk_btn.visible:
-		_walk_btn.size = _walk_btn.get_combined_minimum_size()
-		_walk_btn.position = Vector2(_top_bar.position.x + _top_bar.size.x - _walk_btn.size.x,
-			_cam_btn.position.y + _cam_btn.size.y + 10)
+		_pin_right(_walk_btn, _cam_btn.position.y + _cam_btn.size.y + 10)
 
 
 func _on_walk_changed(active: bool) -> void:
@@ -2015,9 +2017,19 @@ func _place_camera_button() -> void:
 	_cam_btn.visible = GameState.setup_done and not GameState.tutorial_active() and not ringing \
 		and main.screen != Main.MARKET and not _order_entry.visible and not _payment.visible and not main.walking
 	if _cam_btn.visible:
-		_cam_btn.size = _cam_btn.get_combined_minimum_size()
-		_cam_btn.position = Vector2(_top_bar.position.x + _top_bar.size.x - _cam_btn.size.x,
-			_top_bar.position.y + _top_bar.size.y + 10)
+		_pin_right(_cam_btn, _top_bar.position.y + _top_bar.size.y + 10)
+
+
+## Düğmeyi üst barın sağ kenarına hizalar; yazısı uzasa da sola doğru büyür, taşmaz.
+func _pin_right(btn: Button, top: float) -> void:
+	var right := _top_bar.offset_right
+	btn.anchor_left = 1.0
+	btn.anchor_right = 1.0
+	btn.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	btn.offset_right = right
+	btn.offset_left = right - btn.get_combined_minimum_size().x
+	btn.offset_top = top
+	btn.offset_bottom = top + btn.get_combined_minimum_size().y
 
 
 func _refresh_quest_button() -> void:

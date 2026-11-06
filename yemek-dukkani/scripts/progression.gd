@@ -24,12 +24,13 @@ const UPGRADES := {
 	"comfort": { "name": "Müzik ve Dekor", "icon": "music", "desc": "Müşteriler %12 daha sabırlı", "costs": [180, 390, 750], "levels": [2, 5, 8] },
 	"register2": { "name": "Ek Kasa", "icon": "receipt", "desc": "İkinci kasa: kasiyer tutunca sıra ikiye bölünür", "costs": [750], "levels": [3] },
 	# Genişletmeler (EXPANSIONS): dükkan büyür, masa ve müşteri artar, kira da artar.
+	"terrace": { "name": "Çatı Terası", "icon": "sun", "desc": "İçeride döner merdiven, çatıda korkuluklu teras. Masa ve süsleri Dekor'dan koy", "costs": [3600], "levels": [5], "rent": 50 },
 	# Komşu birleştirme (Mahalle'de bitişik komşu alınıp duvar yıkılınca verilir; satılmaz).
 	"annex": { "name": "Sol Salon", "icon": "store", "desc": "Soldaki komşu dükkan salona katıldı", "costs": [0], "levels": [1], "rent": 70, "hidden": true },
 	"annex_r": { "name": "Sağ Salon", "icon": "store", "desc": "Sağdaki komşu dükkan salona katıldı", "costs": [0], "levels": [1], "rent": 70, "hidden": true },
 }
 ## Komşu birleştirmeleri (salon büyür, kira artar)
-const EXPANSIONS := ["annex", "annex_r"]
+const EXPANSIONS := ["annex", "annex_r", "terrace"]
 ## Her genişletme içeride aynı anda bulunabilecek müşteriyi artırır, geliş aralığını kısaltır.
 const EXPANSION_CUSTOMERS := 2
 const EXPANSION_SPAWN := 0.88

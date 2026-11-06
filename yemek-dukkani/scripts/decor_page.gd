@@ -12,6 +12,9 @@ var _ornament_buttons := {}
 var _bonus_label: Label
 var _patio_label: Label
 var _patio_btn: Button
+var _roof_hint: Label
+var _roof_label: Label
+var _roof_btn: Button
 
 
 func _ready() -> void:
@@ -32,13 +35,13 @@ func _ready() -> void:
 		floors.append({ "name": f["name"], "color": f["a"] })
 	_option_grid("floor", floors, 4)
 	for category in Decor.STYLES:
-		if not Decor.STYLES[category].get("patio", false):
+		if not Decor.STYLES[category].get("patio", false) and not Decor.STYLES[category].get("roof", false):
 			_section(Decor.STYLES[category]["name"], Decor.STYLES[category]["icon"])
 			_option_grid(category, Decor.STYLES[category]["options"], 2)
 
 	_section("Süsler", "sparkles")
 	for id in Decor.ORNAMENTS:
-		if not Decor.ORNAMENTS[id].get("patio", false):
+		if not Decor.ORNAMENTS[id].get("patio", false) and not Decor.ORNAMENTS[id].get("roof", false):
 			add_child(_ornament_row(id))
 
 	# Ön bahçe: dükkanın önündeki şerit (masalarına müşteri oturur)
@@ -56,7 +59,22 @@ func _ready() -> void:
 		if Decor.ORNAMENTS[id].get("patio", false):
 			add_child(_ornament_row(id))
 
+	# Çatı terası (Geliştir › Çatı Terası inşa edilince)
+	add_child(UiKit.label("Çatı Terası", 30, UiKit.TEXT, 900))
+	_roof_hint = UiKit.label("", 18, UiKit.MUTED)
+	_roof_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	add_child(_roof_hint)
+	for category in Decor.STYLES:
+		if Decor.STYLES[category].get("roof", false):
+			_section(Decor.STYLES[category]["name"], Decor.STYLES[category]["icon"])
+			_option_grid(category, Decor.STYLES[category]["options"], 2)
+	add_child(_roof_tables_row())
+	for id in Decor.ORNAMENTS:
+		if Decor.ORNAMENTS[id].get("roof", false):
+			add_child(_ornament_row(id))
+
 	GameState.decor_changed.connect(_refresh)
+	GameState.upgrades_changed.connect(_refresh)
 	GameState.money_changed.connect(func(_v: int) -> void: _refresh())
 	_refresh()
 
@@ -119,6 +137,38 @@ func _ornament_row(id: String) -> Control:
 	return card
 
 
+## Teras masası satırı.
+func _roof_tables_row() -> Control:
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", UiKit.card_style())
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	card.add_child(row)
+	row.add_child(UiKit.badge_rect("armchair", UiKit.ORANGE, 48))
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.alignment = BoxContainer.ALIGNMENT_CENTER
+	info.add_theme_constant_override("separation", 0)
+	row.add_child(info)
+	info.add_child(UiKit.label("Teras Masası", 21, UiKit.TEXT, 900))
+	_roof_label = UiKit.label("", 16, UiKit.MUTED)
+	info.add_child(_roof_label)
+	_roof_btn = Button.new()
+	_roof_btn.custom_minimum_size = Vector2(150, 64)
+	_roof_btn.add_theme_font_size_override("font_size", 20)
+	_roof_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_roof_btn.pressed.connect(func() -> void:
+		if GameState.buy_roof_table():
+			Sfx.play("kaching")
+			Haptics.success()
+			GameState.show_toast("Terasa masa kondu!")
+		else:
+			Sfx.play("error")
+	)
+	row.add_child(_roof_btn)
+	return card
+
+
 ## Ön bahçe masası satırı: kaç masa var, "+1 Masa" düğmesi.
 func _patio_tables_row() -> Control:
 	var card := PanelContainer.new()
@@ -153,6 +203,19 @@ func _patio_tables_row() -> Control:
 
 func _refresh() -> void:
 	var decor := GameState.decor
+	var terrace := GameState.upgrade_level("terrace") > 0
+	_roof_hint.text = "Terasın hazır: masa koy, gölgelik ve süslerle düzenle. Müşteriler merdivenden çıkıp yukarıda oturur." if terrace \
+		else "Önce Geliştir › Dükkanı Büyüt'ten Çatı Terası'nı inşa et (Sv 5). İçeriye döner merdiven, çatıya teras yapılır."
+	var roof_tables: int = decor["roof_tables"]
+	_roof_label.text = "%d / %d masa  •  manzaralı teras" % [roof_tables, Decor.MAX_ROOF_TABLES]
+	if roof_tables >= Decor.MAX_ROOF_TABLES:
+		_roof_btn.text = "Tam"
+		_roof_btn.icon = null
+		UiKit.candy(_roof_btn, UiKit.NEUTRAL, UiKit.TEXT)
+	else:
+		_roof_btn.text = "₺%d" % Decor.ROOF_TABLE_PRICE
+		UiKit.set_icon(_roof_btn, "shopping-cart" if terrace else "lock", 24)
+		UiKit.candy(_roof_btn, UiKit.GREEN if terrace else UiKit.NEUTRAL, Color.WHITE if terrace else UiKit.TEXT)
 	var tables: int = decor["patio_tables"]
 	_patio_label.text = "%d / %d masa  •  müşteriler dışarıda oturur" % [tables, Decor.MAX_PATIO_TABLES]
 	if tables >= Decor.MAX_PATIO_TABLES:
@@ -197,6 +260,8 @@ func _refresh() -> void:
 
 
 func _choose(category: String, index: int) -> void:
+	if _needs_roof(Decor.STYLES.get(category, {}).get("roof", false)):
+		return
 	if _needs_patio(Decor.STYLES.get(category, {}).get("patio", false) and category != "patio" and index > 0):
 		return
 	var was_owned := Decor.owns(GameState.decor, category, index)
@@ -211,6 +276,8 @@ func _choose(category: String, index: int) -> void:
 
 
 func _toggle(id: String) -> void:
+	if _needs_roof(Decor.ORNAMENTS[id].get("roof", false)):
+		return
 	if _needs_patio(Decor.ORNAMENTS[id].get("patio", false)):
 		return
 	var owned: bool = (GameState.decor["ornaments"] as Array).has(id)
@@ -222,6 +289,15 @@ func _toggle(id: String) -> void:
 	else:
 		Sfx.play("error")
 		GameState.show_toast("Yeterli paran yok")
+
+
+## Teras inşa edilmeden teras eşyası alınamaz.
+func _needs_roof(is_roof_item: bool) -> bool:
+	if is_roof_item and GameState.upgrade_level("terrace") == 0:
+		Sfx.play("error")
+		GameState.show_toast("Önce Geliştir'den Çatı Terası inşa et")
+		return true
+	return false
 
 
 ## Bahçe zemini yoksa bahçe eşyası alınamaz.

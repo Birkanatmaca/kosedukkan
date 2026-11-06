@@ -226,13 +226,15 @@ func _walk(delta: float) -> void:
 	to.y = 0.0
 	var dist := to.length()
 	if dist <= SPEED * delta:
-		position = Vector3(target.x, position.y, target.z)
+		position = target
 		_path.pop_front()
 		if not entry.is_empty():
 			entry.pop_front()
 		if _path.is_empty():
 			_arrive()
 		return
+	# Merdivende yükseklik de yolla birlikte değişir.
+	position.y = move_toward(position.y, target.y, absf(target.y - position.y) * SPEED * delta / dist)
 	position += to / dist * SPEED * delta
 	_body.rotation.y = lerp_angle(_body.rotation.y, atan2(to.x, to.z), 10.0 * delta)
 	_body.position.y = _base_y + absf(sin(_t * 9.0)) * 0.04
