@@ -180,6 +180,9 @@ func _show_detail(day: int) -> void:
 		_row("    • %s" % person["name"], -int(person["wage"]), UiKit.MUTED)
 	if record.has("rent"):
 		_row("Kira ve faturalar", -int(record.get("rent", 0)), UiKit.RED)
+	if int(record.get("branches", 0)) != 0:
+		var b := int(record["branches"])
+		_row("Şubeler", b, UiKit.GREEN if b >= 0 else UiKit.RED)
 	for name in record.get("quitters", []):
 		_detail.add_child(UiKit.label("    • %s maaşı ödenemedi, ayrıldı" % name, 18, UiKit.RED))
 	var net := GameState.net_of(record)

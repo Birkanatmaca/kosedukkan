@@ -66,6 +66,13 @@ signal rewards_pending
 
 ## Oyuncu kendi kasasını kapattı mı (kasiyer varken bütün müşteriler ona gider).
 var player_register_closed := false
+
+## Şubeler (Branches): her dükkan { lot, data } (data: Branches.SHOP_KEYS alanları).
+## Şube alınmadıysa boş; alınınca ilk dükkan da (lot 0) listeye girer. Oynanan
+## dükkanın alanları GameState'tedir, listedeki kopyası kayıtta güncellenir.
+var shops: Array[Dictionary] = []
+var active_shop := 0
+signal branches_changed
 signal register_mode_changed
 
 ## Oyuncunun menüsü: kurulumda seçilir, seviye atladıkça yemek eklenebilir.
@@ -270,7 +277,67 @@ func to_dict() -> Dictionary:
 		"menu": menu,
 		"quests": quests, "quests_day": quests_day, "quest_bonus_claimed": quest_bonus_claimed,
 		"login_streak": login_streak, "last_login_day": last_login_day, "streak_claimed_day": streak_claimed_day,
+		"player_register_closed": player_register_closed,
+		"shops": _shops_snapshot(), "active_shop": active_shop,
 	}
+
+
+## Oynanan dükkanın kendine ait alanları (kopya).
+func shop_data() -> Dictionary:
+	var all := {
+		"shop_name": shop_name, "decor": decor, "menu": menu, "upgrades": upgrades, "staff": staff,
+		"candidates": candidates, "stock": stock, "batches": batches, "prepared": prepared,
+		"reviews": reviews, "price_factors": price_factors, "player_register_closed": player_register_closed,
+	}
+	return all.duplicate(true)
+
+
+func _shops_snapshot() -> Array:
+	var list: Array = []
+	for i in shops.size():
+		var entry: Dictionary = shops[i].duplicate()
+		if i == active_shop:
+			entry["data"] = shop_data()
+		list.append(entry)
+	return list
+
+
+## Mahalledeki bir dükkan yerini satın alır. Döner: başarılı mı.
+func buy_lot(lot: int) -> bool:
+	var data: Dictionary = Branches.LOTS[lot]
+	if Branches.owned(lot):
+		return false
+	if level < int(data["level"]):
+		show_toast("Bu dükkan için Seviye %d gerekli" % data["level"])
+		return false
+	if money < int(data["price"]):
+		show_toast("Yeterli paran yok")
+		return false
+	money -= int(data["price"])
+	day_stats["upgrades"] += int(data["price"])
+	if shops.is_empty():
+		shops.append({ "lot": 0, "data": {} })
+		active_shop = 0
+	shops.append({ "lot": lot, "data": Branches.new_shop(lot) })
+	branches_changed.emit()
+	return true
+
+
+## Başka bir dükkana geçer: oynanan dükkanın alanları saklanır, diğeri yüklenir.
+## Sahne yeniden kurulur (Main), dükkan yeni haliyle açılır.
+func switch_shop(index: int) -> void:
+	if index == active_shop or index < 0 or index >= shops.size():
+		return
+	shops[active_shop]["data"] = shop_data()
+	active_shop = index
+	var full := to_dict()
+	var data: Dictionary = shops[index]["data"]
+	for key in data:
+		full[key] = data[key]
+	from_dict(full)
+	# Gece geçildiyse yeni dükkan sabahla açılır.
+	if setup_done and not is_open:
+		start_day()
 
 
 ## Kayıttan yükler. Eksik alanlar varsayılan kalır (eski kayıtlarla uyum için).
@@ -334,6 +401,11 @@ func from_dict(data: Dictionary) -> void:
 		quests.append(quest)
 	quests_day = int(data.get("quests_day", 0))
 	quest_bonus_claimed = bool(data.get("quest_bonus_claimed", false))
+	player_register_closed = bool(data.get("player_register_closed", false))
+	shops.clear()
+	for entry in data.get("shops", []):
+		shops.append({ "lot": int(entry["lot"]), "data": entry.get("data", {}) })
+	active_shop = clampi(int(data.get("active_shop", 0)), 0, maxi(shops.size() - 1, 0))
 	login_streak = int(data.get("login_streak", 0))
 	last_login_day = str(data.get("last_login_day", ""))
 	streak_claimed_day = str(data.get("streak_claimed_day", ""))
@@ -451,6 +523,18 @@ func end_day() -> void:
 	money -= paid_rent
 	day_stats["rent"] = paid_rent
 	day_stats["rent_due"] = due
+	# Diğer dükkanlar kendi kasiyer ve aşçısıyla çalıştı
+	var branch_reports: Array = []
+	var branch_net := 0
+	for i in shops.size():
+		if i == active_shop:
+			continue
+		var report := Branches.simulate_day(shops[i])
+		money += int(report["net"])
+		branch_net += int(report["net"])
+		branch_reports.append(report)
+	day_stats["branches"] = branch_net
+	day_stats["branch_reports"] = branch_reports
 	day_stats["quitters"] = quitters
 	day_stats["money"] = money
 	_record_day(paid, quitters)
@@ -465,15 +549,16 @@ func _record_day(paid: Array[Dictionary], quitters: Array[String]) -> void:
 		"day": day, "date": Time.get_date_string_from_system(), "money": money,
 		"wages_paid": paid, "quitters": quitters,
 	}
-	for key in ["revenue", "tips", "quests", "gifts", "supplies", "upgrades", "wages", "rent", "served", "lost"]:
+	for key in ["revenue", "tips", "quests", "gifts", "supplies", "upgrades", "wages", "rent", "branches", "served", "lost"]:
 		record[key] = int(day_stats.get(key, 0))
+	record["branch_reports"] = day_stats.get("branch_reports", [])
 	history.assign(history.filter(func(r: Dictionary) -> bool: return int(r["day"]) != day))
 	history.append(record)
 
 
 ## Günün net kazancı: gelir + bahşiş + görev ödülü − malzeme − geliştirme − maaş.
 static func net_of(record: Dictionary) -> int:
-	return int(record.get("revenue", 0)) + int(record.get("tips", 0)) + int(record.get("quests", 0)) + int(record.get("gifts", 0)) - int(record.get("supplies", 0)) 		- int(record.get("upgrades", 0)) - int(record.get("wages", 0)) - int(record.get("rent", 0))
+	return int(record.get("revenue", 0)) + int(record.get("tips", 0)) + int(record.get("quests", 0)) + int(record.get("gifts", 0)) - int(record.get("supplies", 0)) 		- int(record.get("upgrades", 0)) - int(record.get("wages", 0)) - int(record.get("rent", 0)) + int(record.get("branches", 0))
 
 
 func start_day() -> void:

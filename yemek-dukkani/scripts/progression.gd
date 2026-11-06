@@ -254,7 +254,7 @@ static func random_order(level: int) -> Dictionary:
 	elif level >= 3:
 		kinds = randi_range(1, 2)
 	var order := {}
-	for i in kinds:
+	for i in mini(kinds, foods.size()):
 		order[foods[i]] = 2 if level >= 5 and randf() < 0.25 else 1
 	var drink := _pick_drink(drinks)
 	if randf() < (0.3 + 0.03 * level) / pow(price_ratio(drink), 1.5):

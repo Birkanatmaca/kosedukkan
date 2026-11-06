@@ -166,6 +166,8 @@ var _glass_mat: StandardMaterial3D
 var _door: Node3D
 var _door_open := false
 var _street := Street.new()
+## Kaldırım ve satılık dükkanlar (Mahalle modu)
+var neighborhood: Neighborhood
 ## Yan duvarlar: side (-1 sol, 1 sağ) -> [kapalı, açık]
 var _side_walls := {}
 var _annex: Node3D
@@ -183,6 +185,8 @@ func _ready() -> void:
 	GameState.upgrades_changed.connect(_sync_staff)
 	GameState.register_mode_changed.connect(_on_register_mode)
 	GameState.decor_changed.connect(_apply_decor)
+	GameState.decor_changed.connect(neighborhood.refresh)
+	GameState.branches_changed.connect(neighborhood.refresh)
 	GameState.setup_finished.connect(_apply_decor)
 	GameState.staff_changed.connect(_sync_staff)
 	# Sipariş numaraları her gün 1'den başlar.
@@ -932,6 +936,14 @@ func _sync_expansions() -> void:
 	_street.set_side_open(1, garden)
 
 
+## Mahalle modunda kameranın önünden araba geçmesin.
+func set_walk_mode(active: bool) -> void:
+	_street.near_lane_clear = active
+	neighborhood.set_active(active)
+	if active:
+		neighborhood.refresh()
+
+
 ## Yeni açılan bölüm aşağıdan yükselerek belirir.
 func _pop_in(node: Node3D) -> void:
 	node.position.y = -4.6
@@ -1542,6 +1554,8 @@ func _build_room() -> void:
 		_window(Vector3(x, BACK_WINDOW_BOTTOM, -10.1), BACK_WINDOW_SIZE, 0.0)
 	_build_door()
 	add_child(_street)
+	neighborhood = Neighborhood.new()
+	add_child(neighborhood)
 	# Tabela: boyutu dükkanın adına göre _layout_sign'da ayarlanır.
 	_sign = Node3D.new()
 	_sign.position = Vector3(0, SIGN_Y, -9.97)

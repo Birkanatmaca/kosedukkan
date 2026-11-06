@@ -67,6 +67,10 @@ var _xp_bar: ProgressBar
 var _market_tabs: Array[Button] = []
 var _market_pages: Array[Control] = []
 var _rent_label: Label
+## Mahalle: dükkandan çıkma düğmesi, yürürken alttaki kart ve dükkan penceresi
+var _walk_btn: Button
+var _walk_bar: PanelContainer
+var _lot_ui: LotUI
 var _upgrade_rows := {}
 var _staff_list: VBoxContainer
 var _nav_row: HBoxContainer
@@ -124,6 +128,7 @@ func _ready() -> void:
 	_build_top_bar()
 	_build_quest_button()
 	_build_camera_button()
+	_build_walk_ui()
 	_panels = [_build_market_panel(), _build_shop_panel(), _build_kitchen_panel()]
 	_build_nav()
 	_nav_row.resized.connect(_layout_panels)
@@ -209,7 +214,7 @@ func _process(_delta: float) -> void:
 	_avoid_keyboard()
 	_refresh_summary()
 	_place_pos_screen()
-	var on_shop := main.screen == Main.SHOP and not main.transitioning and not main.register_focus
+	var on_shop := main.screen == Main.SHOP and not main.transitioning and not main.register_focus and not main.walking
 	var on_kitchen := main.screen == Main.KITCHEN and not main.transitioning
 
 	for customer in _cards:
@@ -221,6 +226,7 @@ func _process(_delta: float) -> void:
 	_update_phone_badge(on_shop)
 	_place_quest_button()
 	_place_camera_button()
+	_place_walk_button()
 	var waiting := main.shop.waiting_count()
 
 	var cooked := false
@@ -648,7 +654,7 @@ func _on_day_ended(stats: Dictionary) -> void:
 	title.add_theme_font_size_override("font_size", 44)
 	v.add_child(title)
 	var expenses: int = stats["supplies"] + stats["upgrades"] + stats["wages"] + int(stats.get("rent", 0))
-	var net: int = stats["revenue"] + stats["tips"] + int(stats.get("quests", 0)) + int(stats.get("gifts", 0)) - expenses
+	var net: int = stats["revenue"] + stats["tips"] + int(stats.get("quests", 0)) + int(stats.get("gifts", 0)) - expenses + int(stats.get("branches", 0))
 	var lines := [
 		["smile", "Servis edilen müşteri", "%d" % stats["served"], C_TEXT],
 		["angry", "Kaçan müşteri", "%d" % stats["lost"], UiKit.RED if stats["lost"] > 0 else C_TEXT],
@@ -660,8 +666,18 @@ func _on_day_ended(stats: Dictionary) -> void:
 		["users", "Maaşlar", "-₺%d" % stats["wages"], C_TEXT],
 		["store", "Kira ve faturalar", "-₺%d" % int(stats.get("rent", 0)), C_TEXT],
 	]
+	var reports: Array = stats.get("branch_reports", [])
+	if not reports.is_empty():
+		var branches: int = stats.get("branches", 0)
+		lines.append(["store", "Şubeler", "%s₺%d" % ["+" if branches >= 0 else "-", absi(branches)], C_GREEN if branches >= 0 else UiKit.RED])
 	for line in lines:
 		v.add_child(_summary_row(line[1], line[2], line[3], 26, line[0]))
+	for report in reports:
+		var text := "%s: %d müşteri, ₺%d satış, ₺%d gider" % [report["name"], report["served"], report["revenue"], int(report.get("supplies", 0)) + int(report["wages"]) + int(report["rent"])] \
+			if report["open"] else "%s kapalıydı (kasiyer ve aşçı lazım), kira ₺%d" % [report["name"], report["rent"]]
+		for name in report["quitters"]:
+			text += " • %s ayrıldı" % name
+		v.add_child(_muted_label("   " + text))
 	v.add_child(HSeparator.new())
 	v.add_child(_summary_row("Günün sonucu", "%s₺%d" % ["+" if net >= 0 else "-", absi(net)], C_GREEN if net >= 0 else Color("#e05555"), 32))
 	v.add_child(_summary_row("Kasadaki para", "₺%d" % stats["money"], C_TEXT, 26))
@@ -1768,7 +1784,7 @@ func _filter_kitchen_cards() -> void:
 func _place_pos_screen() -> void:
 	var active := _order_entry.visible or _payment.visible
 	if main.screen == Main.SHOP and GameState.setup_done:
-		_panels[Main.SHOP].visible = not active
+		_panels[Main.SHOP].visible = not active and not main.walking
 	_pos_backdrop.modulate.a = move_toward(_pos_backdrop.modulate.a, 1.0 if active else 0.0, get_process_delta_time() * 4.0)
 	_pos_backdrop.visible = _pos_backdrop.modulate.a > 0.0
 	if not active:
@@ -1836,6 +1852,85 @@ func _build_camera_button() -> void:
 	_refresh_camera_button(main.camera_name())
 
 
+## "Mahalle" düğmesi (kamera düğmesinin altında) ve yürürken alttaki kart.
+func _build_walk_ui() -> void:
+	_walk_btn = Button.new()
+	_walk_btn.text = "Mahalle"
+	_walk_btn.add_theme_font_size_override("font_size", 21)
+	_walk_btn.custom_minimum_size = Vector2(0, 56)
+	UiKit.set_icon(_walk_btn, "door-open", 26)
+	UiKit.candy(_walk_btn, UiKit.CARD, UiKit.TEXT)
+	_walk_btn.pressed.connect(func() -> void:
+		Sfx.play("tap")
+		Haptics.tap()
+		main.start_walk()
+	)
+	_root.add_child(_walk_btn)
+
+	_walk_bar = PanelContainer.new()
+	_walk_bar.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	_walk_bar.offset_left = 20
+	_walk_bar.offset_right = -20
+	_walk_bar.offset_top = -BOTTOM_MARGIN
+	_walk_bar.offset_bottom = -BOTTOM_MARGIN
+	_walk_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_walk_bar.visible = false
+	_root.add_child(_walk_bar)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	_walk_bar.add_child(v)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 12)
+	v.add_child(head)
+	head.add_child(UiKit.badge_rect("store", UiKit.ORANGE, 56))
+	var text := VBoxContainer.new()
+	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text.add_theme_constant_override("separation", 0)
+	head.add_child(text)
+	text.add_child(UiKit.label("Mahalle", 30, UiKit.TEXT, 900))
+	var hint := UiKit.label("Kaldırıma dokun, yürü. Dükkanlara dokun, önüne gidip bak.", 19, UiKit.MUTED, 800)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	text.add_child(hint)
+	var back := Button.new()
+	back.text = "Dükkana Dön"
+	back.custom_minimum_size = Vector2(0, 84)
+	back.add_theme_font_size_override("font_size", 28)
+	UiKit.set_icon(back, "house", 32)
+	UiKit.candy(back, UiKit.ORANGE, Color.WHITE)
+	back.pressed.connect(main.end_walk)
+	v.add_child(back)
+
+	main.walk_changed.connect(_on_walk_changed)
+	main.lot_reached.connect(_open_lot)
+
+
+func _place_walk_button() -> void:
+	_walk_btn.visible = _cam_btn.visible and main.screen == Main.SHOP
+	if _walk_btn.visible:
+		_walk_btn.size = _walk_btn.get_combined_minimum_size()
+		_walk_btn.position = Vector2(_top_bar.position.x + _top_bar.size.x - _walk_btn.size.x,
+			_cam_btn.position.y + _cam_btn.size.y + 10)
+
+
+func _on_walk_changed(active: bool) -> void:
+	_walk_bar.visible = active
+	_nav_row.visible = not active and GameState.setup_done
+	for i in _panels.size():
+		_panels[i].visible = not active and i == main.screen and GameState.setup_done
+	if not active and _lot_ui and is_instance_valid(_lot_ui):
+		_lot_ui.queue_free()
+
+
+func _open_lot(lot: int) -> void:
+	if _lot_ui and is_instance_valid(_lot_ui):
+		_lot_ui.queue_free()
+	_lot_ui = LotUI.new()
+	_lot_ui.lot = lot
+	_lot_ui.switch_requested.connect(main.switch_shop)
+	_root.add_child(_lot_ui)
+	Sfx.play("approve")
+
+
 func _refresh_camera_button(view_name: String) -> void:
 	_cam_btn.text = view_name
 	_cam_btn.size = Vector2.ZERO
@@ -1845,7 +1940,7 @@ func _refresh_camera_button(view_name: String) -> void:
 func _place_camera_button() -> void:
 	var ringing: bool = not main.shop.call.is_empty() and not main.shop.call["open"]
 	_cam_btn.visible = GameState.setup_done and not GameState.tutorial_active() and not ringing \
-		and main.screen != Main.MARKET and not _order_entry.visible and not _payment.visible
+		and main.screen != Main.MARKET and not _order_entry.visible and not _payment.visible and not main.walking
 	if _cam_btn.visible:
 		_cam_btn.size = _cam_btn.get_combined_minimum_size()
 		_cam_btn.position = Vector2(_top_bar.position.x + _top_bar.size.x - _cam_btn.size.x,

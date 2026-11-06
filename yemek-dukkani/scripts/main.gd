@@ -41,6 +41,17 @@ var shop: Shop
 var kitchen: Kitchen
 var hud: Hud
 
+## Mahalle modu: oyuncu karakteriyle dükkanın önündeki kaldırımda yürür.
+var walking := false
+var walker: Walker
+signal walk_changed(active: bool)
+## Yürüyüşte dokunulan dükkan yeri (önüne varınca Hud panelini açar)
+signal lot_reached(lot: int)
+var _walk_target_lot := -1
+## Kamera yoldan, iki şeridin arasından kaldırıma bakar (yakın şeritten araba geçmez).
+const WALK_EYE := Vector3(0, 5.4, -15.6)
+const WALK_LOOK := Vector3(0, 1.5, -10.2)
+
 var _views: Array[Transform3D] = []
 var _env: Environment
 var _sun: DirectionalLight3D
@@ -88,6 +99,9 @@ func _ready() -> void:
 	hud = Hud.new()
 	hud.setup(self)
 	add_child(hud)
+	shop.neighborhood.ground_tapped.connect(_walk_to_point)
+	shop.neighborhood.lot_tapped.connect(_walk_to_lot)
+	shop.neighborhood.home_tapped.connect(end_walk)
 
 	var fade_layer := CanvasLayer.new()
 	fade_layer.layer = 10
@@ -163,7 +177,7 @@ func kitchen_focus(view: String) -> void:
 
 ## Kamera düğmesi: dükkanda açılar arasında, mutfakta cihazlar arasında döner.
 func cycle_camera() -> void:
-	if transitioning:
+	if transitioning or walking:
 		return
 	match screen:
 		SHOP:
@@ -182,6 +196,8 @@ func cycle_camera() -> void:
 
 
 func camera_name() -> String:
+	if walking:
+		return "Mahalle"
 	match screen:
 		SHOP: return SHOP_CAMS[shop_cam][0]
 		KITCHEN: return KITCHEN_CAM_NAMES.get(kitchen_view, "Genel")
@@ -198,17 +214,113 @@ func _set_shop_cam(index: int) -> void:
 	camera_changed.emit(camera_name())
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	# Dikey ekranda genişliği, yatay ekranda (masaüstü) yüksekliği sabit tut.
 	var view_size := get_viewport().get_visible_rect().size
 	camera.keep_aspect = Camera3D.KEEP_WIDTH if view_size.x < view_size.y else Camera3D.KEEP_HEIGHT
 	_update_daylight()
+	if walking and walker:
+		var x := clampf(walker.position.x, -Neighborhood.WALK_X + 2.0, Neighborhood.WALK_X - 2.0)
+		var target := _view(shop, WALK_EYE + Vector3(x, 0, 0), WALK_LOOK + Vector3(x, 0, 0))
+		camera.global_transform = camera.global_transform.interpolate_with(target, minf(1.0, 3.5 * delta))
+
+
+# --- Mahalle ---------------------------------------------------------------------
+
+## Dükkandan çıkar: karakter kapıdan kaldırıma yürür, kamera yoldan bakar.
+func start_walk() -> void:
+	if walking or transitioning or screen != SHOP or not GameState.setup_done:
+		return
+	walking = true
+	register_focus = false
+	if shop_cam != 0:
+		shop_cam = 0
+		shop.set_ceiling_open(false)
+	walker = Walker.new()
+	shop.add_child(walker)
+	walker.position = Vector3(0, 0, Shop.DOOR.z + 0.6)
+	walker.walk([Shop.DOOR, Vector3(0, 0, -10.8), Vector3(0, 0, Neighborhood.WALK_Z)], PI)
+	shop.set_walk_mode(true)
+	camera_changed.emit(camera_name())
+	walk_changed.emit(true)
+
+
+## Dükkana döner: karakter kapıdan girer, kamera salona döner.
+func end_walk() -> void:
+	if not walking:
+		return
+	walking = false
+	_walk_target_lot = -1
+	shop.set_walk_mode(false)
+	if is_instance_valid(walker):
+		walker.walk(_sidewalk_path(Vector3(0, 0, Neighborhood.WALK_Z)) + [Vector3(0, 0, -10.8), Shop.DOOR, Vector3(0, 0, Shop.DOOR.z + 0.8)])
+		walker.arrived.connect(walker.queue_free)
+	walker = null
+	var tween := create_tween()
+	tween.tween_interval(0.3)
+	tween.tween_property(camera, "global_transform", _views[SHOP], 0.8).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	camera_changed.emit(camera_name())
+	walk_changed.emit(false)
+
+
+## Kaldırımda bir noktaya: kapının önündeyse önce kaldırıma iner.
+func _sidewalk_path(to: Vector3) -> Array:
+	var path: Array = []
+	if walker and walker.position.z > -11.0:
+		path.append(Vector3(walker.position.x, 0, Neighborhood.WALK_Z))
+	path.append(to)
+	return path
+
+
+func _walk_to_point(point: Vector3) -> void:
+	if not walking:
+		return
+	_walk_target_lot = -1
+	var local := shop.to_local(point)
+	var x := clampf(local.x, -Neighborhood.WALK_X, Neighborhood.WALK_X)
+	walker.walk(_sidewalk_path(Vector3(x, 0, Neighborhood.WALK_Z)), PI)
+	Sfx.play("tap")
+
+
+## Bir dükkana dokunuldu: önündeki kaldırıma yürür, varınca Hud bilgi panelini açar.
+func _walk_to_lot(lot: int) -> void:
+	if not walking:
+		return
+	var x: float = Branches.LOTS[lot]["x"]
+	_walk_target_lot = lot
+	walker.walk(_sidewalk_path(Vector3(x + 0.9, 0, -10.9)), 0.0)
+	if not walker.arrived.is_connected(_on_walker_arrived):
+		walker.arrived.connect(_on_walker_arrived)
+	Sfx.play("tap")
+
+
+func _on_walker_arrived() -> void:
+	if walking and _walk_target_lot != -1:
+		var lot := _walk_target_lot
+		_walk_target_lot = -1
+		lot_reached.emit(lot)
+
+
+## Başka dükkana geçer: kısa kararma, kayıt ve sahne yeniden kurulur.
+func switch_shop(index: int) -> void:
+	if transitioning:
+		return
+	transitioning = true
+	var tween := create_tween()
+	tween.tween_property(_fade, "color:a", 1.0, 0.3)
+	tween.tween_callback(func() -> void:
+		GameState.switch_shop(index)
+		Saves.save_game()
+		get_tree().reload_current_scene()
+	)
 
 
 func go_to(target: int) -> void:
 	target = clampi(target, MARKET, KITCHEN)
 	if target == screen or transitioning or not GameState.setup_done:
 		return
+	if walking:
+		end_walk()
 	register_focus = false
 	if shop_cam != 0:
 		shop_cam = 0
@@ -239,7 +351,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif _pressing:
 			_pressing = false
 			var delta: Vector2 = event.position - _press_pos
-			if absf(delta.x) > SWIPE_DISTANCE and absf(delta.x) > absf(delta.y):
+			if absf(delta.x) > SWIPE_DISTANCE and absf(delta.x) > absf(delta.y) and not walking:
 				# Sağa kaydırınca soldaki ekrana geçilir (ve tersi).
 				go_to(screen - 1 if delta.x > 0 else screen + 1)
 			elif delta.length() < 30.0:
@@ -253,6 +365,8 @@ func _physics_process(_delta: float) -> void:
 	_pending_tap = null
 	var from := camera.project_ray_origin(pos)
 	var query := PhysicsRayQueryParameters3D.create(from, from + camera.project_ray_normal(pos) * 30.0)
+	# Mahallede sadece kaldırım ve dükkanlara dokunulur (katman 2; müşteriler, masalar değil).
+	query.collision_mask = Neighborhood.LAYER if walking else 1
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	if hit and hit["collider"].has_meta("tap_at"):
 		# Dokunulan noktayı isteyenler (mutfaktaki cihazlar: en yakın ürün seçilir)
@@ -305,4 +419,7 @@ func _update_daylight() -> void:
 	_env.ambient_light_energy = 0.3 + 0.35 * light
 	_env.ambient_light_color = Color("#fff1e0").lerp(Color("#5a6aa8"), 1.0 - light)
 	_env.background_color = Color("#eadcc8").lerp(Color("#3a3548"), (1.0 - light) * 0.8)
+	if walking:
+		# Sokakta binaların üstü gökyüzü
+		_env.background_color = Color("#1a2140").lerp(Color("#bfe0f5") * tint, light)
 	shop.set_daylight(light, tint)

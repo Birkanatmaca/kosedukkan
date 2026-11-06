@@ -23,6 +23,15 @@ const CAR_COLORS := [
 const BUILDING_COLORS := [Color("#e8c9a0"), Color("#c98f6b"), Color("#a9c4c9"), Color("#e6dccb"), Color("#b5846a"), Color("#d9b3b3")]
 
 var _sky: StandardMaterial3D
+## Mahalle modunda kamera yakın şeridin üstünden bakar: o şeritten araba geçmez.
+var near_lane_clear := false:
+	set(value):
+		near_lane_clear = value
+		if value:
+			for car in _cars.duplicate():
+				if is_equal_approx(car.position.z, LANES[0]):
+					_cars.erase(car)
+					car.queue_free()
 var _cars: Array[Node3D] = []
 var _car_timer := 0.0
 ## Toplu çizilecek parçalar: grup -> tür -> [[Transform3D, Color], ...]
@@ -121,7 +130,7 @@ func _build_buildings() -> void:
 
 func _build_trees() -> void:
 	# Kaldırım ağaçları (arka pencerelerden) ve yan bahçedeki ağaçlar
-	for x in [-8.5, 8.5, -16.0, 16.0]:
+	for x in [-8.5, 8.5, -21.2, 21.2]:
 		_tree(Vector3(x, 0, -12.1), 1.0)
 	for side in [-1.0, 1.0]:
 		_group = int(side)
@@ -153,7 +162,7 @@ func _build_lamps() -> void:
 
 ## Basit araba: gövde, kabin, camlar, tekerlekler, farlar. Yöne göre döner.
 func _spawn_car(start_x := INF) -> void:
-	var lane := randi() % LANES.size()
+	var lane := 1 if near_lane_clear else randi() % LANES.size()
 	var dir := 1.0 if lane == 0 else -1.0
 	var car := Node3D.new()
 	car.position = Vector3(-dir * CAR_RANGE if start_x == INF else start_x, 0, LANES[lane])

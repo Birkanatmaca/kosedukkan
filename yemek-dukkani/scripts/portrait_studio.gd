@@ -60,7 +60,11 @@ func _render(person: Dictionary) -> Texture2D:
 	camera.global_transform = Transform3D(Basis(), Vector3(0.0, head + 0.08, 1.4)).looking_at(Vector3(0, head - 0.02, 0), Vector3.UP)
 	camera.current = true
 	# Duruş oturana kadar birkaç kare çiz, sonra dondur (sonraki karelerde maliyet yok).
+	# (Sahne bu arada yeniden kurulduysa — dükkan değişimi — görüntü alanı silinmiş olabilir.)
+	var ref: WeakRef = weakref(viewport)
 	get_tree().create_timer(0.25).timeout.connect(func() -> void:
-		viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		var vp: SubViewport = ref.get_ref()
+		if vp:
+			vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	)
 	return viewport.get_texture()
