@@ -16,14 +16,28 @@ const GRILL_X := -0.9
 const FRYER_X := 0.9
 ## Pişirme yerleri: önce ön sıra, geliştirmelerle orta ve arka sıra açılır (en fazla 9).
 const GRILL_SLOTS := [
-	Vector2(-0.55, 0.28), Vector2(0.0, 0.28), Vector2(0.55, 0.28),
+	Vector2(-0.55, 0.32), Vector2(0.0, 0.32), Vector2(0.55, 0.32),
 	Vector2(0.0, 0.0), Vector2(-0.55, 0.0), Vector2(0.55, 0.0),
-	Vector2(0.0, -0.28), Vector2(-0.55, -0.28), Vector2(0.55, -0.28),
+	Vector2(0.0, -0.32), Vector2(-0.55, -0.32), Vector2(0.55, -0.32),
 ]
 ## Taş fırın: tezgâhın sağında, kendi tabanında. Pişirme yerleri kubbenin içinde.
 const OVEN_X := 3.25
 const OVEN_FLOOR := 0.98
 const OVEN_SLOTS := [Vector2(-0.2, -0.02), Vector2(0.2, -0.02), Vector2(-0.2, -0.32), Vector2(0.2, -0.32)]
+## Fırın kapasitesine göre büyür: yer sayısı -> [ölçek, ağızda tek sıra dizilen x'ler].
+## Ürünlerin hepsi ağızda yan yana durur (arkada kalıp görünmez olmasın).
+const OVEN_LAYOUTS := {
+	1: [1.0, [0.0]],
+	2: [1.0, [-0.2, 0.2]],
+	3: [1.18, [-0.32, 0.0, 0.32]],
+	4: [1.34, [-0.45, -0.15, 0.15, 0.45]],
+}
+## Fırın sol kenarından (tezgâh tarafı) ve ağzından büyür: sağa ve arkaya genişler.
+const OVEN_PIVOT := Vector3(OVEN_X - 0.7, 0, 0.27)
+## Ürünlerin fırındaki derinliği (büyümeden önceki ölçüde)
+const OVEN_SLOT_Z := -0.06
+## Dokunulan noktaya bu kadar yakın ürünler aday; çiğ olanlar biraz geride sayılır.
+const TAP_RADIUS := 0.5
 ## Kürek fırının ağzında bekler; ürünü içeri sürer ya da dışarı çeker.
 const PEEL_REST_Z := 0.95
 const FRYER_SLOTS := [Vector2(-0.24, 0.17), Vector2(0.24, 0.17), Vector2(-0.24, -0.2), Vector2(0.24, -0.2)]
@@ -70,6 +84,8 @@ var _peel_pending := Callable()
 var _t := 0.0
 ## cihaz -> o cihazın bütün parçalarını tutan düğüm (menüde yoksa gizli)
 var _device_roots := {}
+## Fırının dokunma alanı (fırın büyüyünce o da büyür)
+var _oven_tap: StaticBody3D
 ## Art arda tam kıvam yakalama sayısı (bonus büyür)
 var _streak := 0
 ## Aşçı (Staff "asci"): tezgâhın arkasında durur, siparişleri kendisi pişirir.
@@ -84,6 +100,9 @@ func _ready() -> void:
 	_build_device("izgara", _build_grill)
 	_build_device("fritoz", _build_fryer)
 	_build_device("firin", _build_oven)
+	# Kürek fırınla birlikte ölçeklenmesin: mutfağa bağlanır.
+	_peel.reparent(self, false)
+	_build_tap_areas()
 	_build_pass()
 	_sync_upgrades()
 	GameState.prepared_changed.connect(_refresh_pass)
@@ -313,8 +332,8 @@ func _sync_upgrades() -> void:
 		_add_slot("izgara", Vector3(GRILL_X + p.x, 1.09, p.y))
 	var oven_count := Progression.BASE_OVEN_SLOTS + GameState.upgrade_level("oven_slot") if devices.has("firin") else 0
 	while _count("firin") < mini(oven_count, OVEN_SLOTS.size()):
-		var p: Vector2 = OVEN_SLOTS[_count("firin")]
-		_add_slot("firin", Vector3(OVEN_X + p.x, OVEN_FLOOR + 0.01, p.y))
+		_add_slot("firin", Vector3(OVEN_X, OVEN_FLOOR + 0.01, OVEN_SLOT_Z))
+	_layout_oven()
 	while _count("fritoz") < mini(fryer_count, FRYER_SLOTS.size()):
 		var p: Vector2 = FRYER_SLOTS[_count("fritoz")]
 		var pos := Vector3(FRYER_X + p.x, 1.18, p.y)
@@ -350,6 +369,92 @@ func add_ingredient(id: String) -> void:
 				_peel_in(slot, id)
 			return
 	GameState.show_toast("Izgara dolu!" if device == "izgara" else "Fritöz dolu!")
+
+
+# --- Dokunma ve fırının büyümesi --------------------------------------------------
+
+## Cihazların üstü de dokunma alanı: ürünlerin arasına dokununca da en yakın ürün alınır.
+func _build_tap_areas() -> void:
+	var areas := [
+		["izgara", self, Vector3(1.75, 0.04, 1.0), Vector3(GRILL_X, 1.09, 0)],
+		["fritoz", self, Vector3(1.0, 0.04, 0.9), Vector3(FRYER_X, 1.17, 0)],
+		["firin", self, Vector3(1.3, 0.5, 0.75), Vector3(OVEN_X, OVEN_FLOOR + 0.25, -0.05)],
+	]
+	for area in areas:
+		var body := Util.collider_box(area[1], area[2], area[3])
+		body.set_meta("tap_at", _on_device_tapped.bind(area[0]))
+		if area[0] == "firin":
+			_oven_tap = body
+
+
+func _on_device_tapped(point: Vector3, device: String) -> void:
+	if not GameState.menu_devices().has(device):
+		return
+	var best := _nearest_slot(device, point)
+	if best:
+		_on_slot_tapped(best)
+	else:
+		GameState.show_toast("Aşağıdan malzeme seç")
+
+
+func _on_slot_tapped_at(slot: CookSlot, point: Vector3) -> void:
+	var best := _nearest_slot(slot.device, point)
+	_on_slot_tapped(best if best else slot)
+
+
+## Dokunulan noktaya en yakın dolu pişirme yeri; pişmiş olan çiğden önce gelir.
+func _nearest_slot(device: String, point: Vector3) -> CookSlot:
+	var local := to_local(point)
+	var best: CookSlot = null
+	var best_score := INF
+	for slot in slots:
+		if slot.device != device or slot.is_empty():
+			continue
+		var d := Vector2(slot.position.x - local.x, slot.position.z - local.z).length()
+		var radius := TAP_RADIUS * (oven_scale() if device == "firin" else 1.0)
+		if d > radius:
+			continue
+		var score := d + (0.3 if slot.doneness() < Items.RAW_LIMIT else 0.0)
+		if score < best_score:
+			best_score = score
+			best = slot
+	return best
+
+
+## Fırının şu anki büyüklüğü (yer sayısına göre)
+func oven_scale() -> float:
+	var n := clampi(_count("firin"), 1, 4)
+	return OVEN_LAYOUTS[n][0]
+
+
+## Fırının ortasının x'i (büyüyünce sağa kayar)
+func oven_center_x() -> float:
+	return OVEN_PIVOT.x + (OVEN_X - OVEN_PIVOT.x) * oven_scale()
+
+
+## Fırın gövdesini yer sayısına göre büyütür, ürünleri ağızda yan yana dizer.
+func _layout_oven() -> void:
+	var oven_slots := slots.filter(func(s: CookSlot) -> bool: return s.device == "firin")
+	if oven_slots.is_empty():
+		return
+	var layout: Array = OVEN_LAYOUTS[clampi(oven_slots.size(), 1, 4)]
+	var s: float = layout[0]
+	var root: Node3D = _device_roots["firin"]
+	var target := Transform3D(Basis.from_scale(Vector3(s, 1, s)), OVEN_PIVOT * Vector3(1 - s, 0, 1 - s))
+	if root.transform.is_equal_approx(target):
+		pass
+	elif is_inside_tree() and _t > 0.0:
+		root.create_tween().tween_property(root, "transform", target, 0.5).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	else:
+		root.transform = target
+	if _oven_tap:
+		_oven_tap.position = Vector3(OVEN_PIVOT.x + (OVEN_X - OVEN_PIVOT.x) * s, OVEN_FLOOR + 0.25, OVEN_PIVOT.z + (-0.05 - OVEN_PIVOT.z) * s)
+		((_oven_tap.get_child(0) as CollisionShape3D).shape as BoxShape3D).size = Vector3(1.3 * s, 0.5, 0.75 * s)
+	var xs: Array = layout[1]
+	for i in oven_slots.size():
+		var slot: CookSlot = oven_slots[i]
+		var local := Vector3(OVEN_X + xs[i], 0, OVEN_SLOT_Z)
+		slot.position = Vector3(OVEN_PIVOT.x + (local.x - OVEN_PIVOT.x) * s, OVEN_FLOOR + 0.01, OVEN_PIVOT.z + (local.z - OVEN_PIVOT.z) * s)
 
 
 func _on_slot_tapped(slot: CookSlot) -> void:
@@ -420,6 +525,7 @@ func _add_slot(device: String, pos: Vector3) -> void:
 	slot.device = device
 	slot.position = pos
 	slot.tapped.connect(_on_slot_tapped)
+	slot.tapped_at.connect(_on_slot_tapped_at)
 	add_child(slot)
 	slots.append(slot)
 	slot_added.emit(slot)

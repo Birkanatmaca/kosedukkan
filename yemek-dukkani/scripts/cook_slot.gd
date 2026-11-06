@@ -5,6 +5,8 @@ extends Node3D
 ## oranına göre çiğden yanığa doğru değişir; üstünden buhar / duman çıkar.
 
 signal tapped(slot: CookSlot)
+## Dokunulan nokta da bildirilir: mutfak oraya en yakın ürünü seçer.
+signal tapped_at(slot: CookSlot, point: Vector3)
 
 var device := ""
 var product := ""
@@ -22,8 +24,9 @@ var _smoke: CPUParticles3D
 
 func _ready() -> void:
 	_mat.roughness = 0.55
-	var body := Util.collider_box(self, Vector3(0.42, 0.3, 0.42), Vector3(0, 0.1, 0))
-	body.set_meta("tap", func() -> void: tapped.emit(self))
+	# Yassı dokunma alanı: eğik bakan kamerada öndeki yer arkadakinin önünü kesmesin.
+	var body := Util.collider_box(self, Vector3(0.48, 0.07, 0.3), Vector3(0, 0.03, 0))
+	body.set_meta("tap_at", func(point: Vector3) -> void: tapped_at.emit(self, point))
 	_build_smoke()
 
 

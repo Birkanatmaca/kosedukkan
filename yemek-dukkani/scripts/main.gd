@@ -147,7 +147,10 @@ func kitchen_focus(view: String) -> void:
 		"izgara":
 			target = _view(kitchen, Vector3(Kitchen.GRILL_X, 2.2, 1.35), Vector3(Kitchen.GRILL_X, 0.2, 0.15))
 		"firin":
-			target = _view(kitchen, Vector3(Kitchen.OVEN_X, 1.75, 1.6), Vector3(Kitchen.OVEN_X, 0.55, -0.2))
+			# Fırın büyüdükçe kamera biraz geri çekilir.
+			var grow := kitchen.oven_scale() - 1.0
+			var ox := kitchen.oven_center_x()
+			target = _view(kitchen, Vector3(ox, 1.75 + grow * 0.8, 1.6 + grow * 1.6), Vector3(ox, 0.55, -0.2))
 		"fritoz":
 			target = _view(kitchen, Vector3(Kitchen.FRYER_X, 2.0, 1.1), Vector3(Kitchen.FRYER_X, 0.3, 0.15))
 	var tween := create_tween()
@@ -243,7 +246,10 @@ func _physics_process(_delta: float) -> void:
 	var from := camera.project_ray_origin(pos)
 	var query := PhysicsRayQueryParameters3D.create(from, from + camera.project_ray_normal(pos) * 30.0)
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if hit and hit["collider"].has_meta("tap"):
+	if hit and hit["collider"].has_meta("tap_at"):
+		# Dokunulan noktayı isteyenler (mutfaktaki cihazlar: en yakın ürün seçilir)
+		(hit["collider"].get_meta("tap_at") as Callable).call(hit["position"])
+	elif hit and hit["collider"].has_meta("tap"):
 		(hit["collider"].get_meta("tap") as Callable).call()
 
 
