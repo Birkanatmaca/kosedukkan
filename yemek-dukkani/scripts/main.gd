@@ -26,11 +26,12 @@ const SHOP_CAMS := [
 	["Salon", Vector3(-4.9, 2.9, -9.4), Vector3(0.8, 0.9, -0.2)],
 	["Köşe", Vector3(5.1, 3.4, 1.0), Vector3(-1.2, 0.6, -5.8)],
 	["Kasa", Vector3(0.3, 2.0, 2.7), Vector3(0.1, 1.0, -0.6)],
-	["Yan Salon", Vector3(-8.6, 3.6, 3.4), Vector3(-9.0, 0.6, -4.8)],
-	["Bahçe", Vector3(8.6, 3.6, 3.4), Vector3(9.0, 0.6, -4.8)],
+	["Sol Salon", Vector3(-12.0, 4.2, 4.2), Vector3(-12.0, 0.6, -4.8)],
+	["Sağ Salon", Vector3(12.0, 4.2, 4.2), Vector3(12.0, 0.6, -4.8)],
+	["Ön Bahçe", Vector3(0, 4.6, -17.6), Vector3(0, 0.9, -11.0)],
 ]
 ## Bu açılar ancak ilgili genişletme alınınca kamera sırasına girer.
-const SHOP_CAM_UPGRADE := { "Yan Salon": "annex", "Bahçe": "garden" }
+const SHOP_CAM_UPGRADE := { "Sol Salon": "annex", "Sağ Salon": "annex_r" }
 const KITCHEN_CAM_NAMES := { "": "Genel", "izgara": "Izgara", "fritoz": "Fritöz", "firin": "Fırın" }
 ## Dükkandaki kamera açısının sırası (SHOP_CAMS)
 var shop_cam := 0
@@ -49,8 +50,8 @@ signal walk_changed(active: bool)
 signal lot_reached(lot: int)
 var _walk_target_lot := -1
 ## Kamera yoldan, iki şeridin arasından kaldırıma bakar (yakın şeritten araba geçmez).
-const WALK_EYE := Vector3(0, 5.4, -15.6)
-const WALK_LOOK := Vector3(0, 1.5, -10.2)
+const WALK_EYE := Vector3(0, 5.6, -18.0)
+const WALK_LOOK := Vector3(0, 1.4, -11.4)
 
 var _views: Array[Transform3D] = []
 var _env: Environment
@@ -182,8 +183,7 @@ func cycle_camera() -> void:
 	match screen:
 		SHOP:
 			var next := (shop_cam + 1) % SHOP_CAMS.size()
-			while next != 0 and SHOP_CAM_UPGRADE.has(SHOP_CAMS[next][0]) \
-					and GameState.upgrade_level(SHOP_CAM_UPGRADE[SHOP_CAMS[next][0]]) == 0:
+			while next != 0 and not _cam_available(SHOP_CAMS[next][0]):
 				next = (next + 1) % SHOP_CAMS.size()
 			_set_shop_cam(next)
 		KITCHEN:
@@ -193,6 +193,15 @@ func cycle_camera() -> void:
 					views.append(device)
 			kitchen_focus(views[(views.find(kitchen_view) + 1) % views.size()])
 			camera_changed.emit(camera_name())
+
+
+## Birleşen salonların açısı ancak birleşince, ön bahçe açısı bahçe zemini alınınca.
+func _cam_available(cam: String) -> bool:
+	if SHOP_CAM_UPGRADE.has(cam):
+		return GameState.upgrade_level(SHOP_CAM_UPGRADE[cam]) > 0
+	if cam == "Ön Bahçe":
+		return int(GameState.decor["patio_floor"]) > 0
+	return true
 
 
 func camera_name() -> String:
@@ -266,7 +275,7 @@ func end_walk() -> void:
 ## Kaldırımda bir noktaya: kapının önündeyse önce kaldırıma iner.
 func _sidewalk_path(to: Vector3) -> Array:
 	var path: Array = []
-	if walker and walker.position.z > -11.0:
+	if walker and walker.position.z > Neighborhood.WALK_Z + 0.5:
 		path.append(Vector3(walker.position.x, 0, Neighborhood.WALK_Z))
 	path.append(to)
 	return path
@@ -288,7 +297,7 @@ func _walk_to_lot(lot: int) -> void:
 		return
 	var x: float = Branches.LOTS[lot]["x"]
 	_walk_target_lot = lot
-	walker.walk(_sidewalk_path(Vector3(x + 0.9, 0, -10.9)), 0.0)
+	walker.walk(_sidewalk_path(Vector3(x + 0.9, 0, Neighborhood.WALK_Z + 0.6)), 0.0)
 	if not walker.arrived.is_connected(_on_walker_arrived):
 		walker.arrived.connect(_on_walker_arrived)
 	Sfx.play("tap")

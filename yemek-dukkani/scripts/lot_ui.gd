@@ -38,10 +38,13 @@ func _build() -> void:
 	for child in _box.get_children():
 		child.queue_free()
 	var shown := Branches.shown_lot(lot)
-	if Branches.owned(shown):
-		_build_owned(shown)
-	else:
-		_build_for_sale(shown)
+	if Branches.merged(shown):
+		_build_merged(shown)
+		return
+	match Branches.state(shown):
+		"owned": _build_owned(shown)
+		"for_sale": _build_for_sale(shown)
+		_: _build_open(shown)
 
 
 func _header(icon: String, color_: Color, title: String, sub: String) -> void:
@@ -90,28 +93,81 @@ func _button(text: String, icon: String, color_: Color, fg: Color, action: Calla
 	return btn
 
 
+## Komşu şirket hâlâ çalışıyor: bilgi ve ne zaman satılığa çıkabileceği.
+func _build_open(shown: int) -> void:
+	var data: Dictionary = Branches.LOTS[shown]
+	_header("store", data["brand"], data["company"], "%s • komşun" % data["kind"])
+	_note("Bu dükkan açık, sahibi şimdilik satmayı düşünmüyor.")
+	if GameState.level < int(data["level"]):
+		_note("Seviye %d olunca işleri bozulmaya başlar; kapanırsa sana haber veririz." % data["level"], UiKit.ORANGE.darkened(0.2))
+	else:
+		_note("İşleri pek iyi gitmiyor, her an kapanabilir. Kapanınca sana haber veririz!", UiKit.ORANGE.darkened(0.2))
+	_row("receipt", "Satılığa çıkarsa fiyatı", "₺%s" % Neighborhood.money_text(data["price"]))
+	_button("Kapat", "x", UiKit.NEUTRAL, UiKit.TEXT, _close)
+
+
 func _build_for_sale(shown: int) -> void:
 	var data: Dictionary = Branches.LOTS[shown]
-	_header("store", UiKit.ORANGE, "Satılık Dükkan", data["name"])
-	_note(data["desc"])
+	_header("store", UiKit.ORANGE, "Satılık Dükkan", "%s kapandı • %s" % [data["company"], data["name"]])
 	_row("users", "Müşteri yoğunluğu", "%%%d" % roundi(float(data["demand"]) * 100.0), UiKit.GREEN)
 	_row("receipt", "Günlük kira", "₺%d" % data["rent"])
-	_row("star", "Gereken seviye", "Sv %d" % data["level"], UiKit.TEXT if GameState.level >= int(data["level"]) else UiKit.RED)
-	_note("Aldığın dükkan hazır döşenmiş açılır. Kendi kasiyeri ve aşçısı olunca sen başka dükkandayken de her gün kendi kendine satış yapar; kazancı ortak kasana girer.")
+	_row("coins", "Fiyatı", "₺%s" % Neighborhood.money_text(data["price"]))
 	var price: int = data["price"]
-	var can := GameState.level >= int(data["level"]) and GameState.money >= price
-	var text := "Satın Al  ₺%s" % Neighborhood.money_text(price)
-	if GameState.level < int(data["level"]):
-		text = "Seviye %d gerekli" % data["level"]
-	elif GameState.money < price:
-		text = "₺%s eksik" % Neighborhood.money_text(price - GameState.money)
-	_button(text, "shopping-cart" if can else "lock", UiKit.GREEN if can else UiKit.NEUTRAL, Color.WHITE if can else UiKit.TEXT, func() -> void:
-		if GameState.buy_lot(shown):
-			Sfx.play("level_up")
-			Haptics.celebrate()
-			GameState.show_toast("Tebrikler! %s artık senin" % data["name"])
-			_build()
-	, not can)
+	var can := GameState.money >= price
+	if not can:
+		_note("₺%s daha biriktirmen lazım. Dükkan bekler, kimse almaz." % Neighborhood.money_text(price - GameState.money), UiKit.RED)
+	if Branches.can_merge(shown):
+		_note("Bitişiğindeki dükkan! Duvarı yıkıp salonuna katabilir (+6 masa, daha çok müşteri) ya da ayrı bir dükkan açabilirsin.")
+		_button("Duvarı Yık, Salona Kat", "store", UiKit.GREEN if can else UiKit.NEUTRAL, Color.WHITE if can else UiKit.TEXT, func() -> void:
+			if GameState.buy_lot(shown, true):
+				Sfx.play("level_up")
+				Haptics.celebrate()
+				GameState.show_toast("Duvar yıkıldı! Salonun büyüdü")
+				_close()
+		, not can)
+	else:
+		_note("Ayrı bir dükkan açarsın: türünü sen seçersin. Kasiyeri ve aşçısı olunca sen yokken de kazandırır.")
+	_button("Ayrı Dükkan Aç", "door-open", UiKit.ORANGE if can else UiKit.NEUTRAL, Color.WHITE if can else UiKit.TEXT, _build_themes.bind(shown), not can)
+	_button("Kapat", "x", UiKit.NEUTRAL, UiKit.TEXT, _close)
+
+
+## Ayrı dükkanın türü: pizzacı, tavukçu, köfteci, pideci ya da ilk dükkanın menüsü.
+func _build_themes(shown: int) -> void:
+	for child in _box.get_children():
+		child.queue_free()
+	_header("utensils", UiKit.ORANGE, "Ne dükkanı olsun?", "Menüsü ve rengi buna göre kurulur")
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 10)
+	_box.add_child(grid)
+	for theme in Branches.THEMES:
+		var data: Dictionary = Branches.THEMES[theme]
+		var btn := Button.new()
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.custom_minimum_size = Vector2(0, 96)
+		btn.add_theme_font_size_override("font_size", 22)
+		var foods: Array = (data["menu"] as Array).filter(func(id: String) -> bool: return Items.is_food(id)).map(func(id: String) -> String: return Items.display_name(id))
+		btn.text = "%s\n%s" % [data["name"], ", ".join(foods) if not foods.is_empty() else "İlk dükkanınla aynı"]
+		btn.clip_text = true
+		btn.add_theme_font_size_override("font_size", 19)
+		UiKit.set_icon(btn, data["icon"], 30)
+		UiKit.candy(btn, UiKit.CARD, UiKit.TEXT)
+		btn.pressed.connect(func() -> void:
+			if GameState.buy_lot(shown, false, theme):
+				Sfx.play("level_up")
+				Haptics.celebrate()
+				GameState.show_toast("Yeni dükkanın hayırlı olsun!")
+				_build()
+		)
+		grid.add_child(btn)
+	_button("Geri", "chevron-left", UiKit.NEUTRAL, UiKit.TEXT, _build)
+
+
+## Salona katılan komşu (ilk dükkan şu an oynanmıyorsa görünür).
+func _build_merged(shown: int) -> void:
+	_header("store", UiKit.GREEN, Branches.home_name(), "Salonuna katıldı • %s" % Branches.LOTS[shown]["name"])
+	_note("Bu dükkanın duvarını yıkıp ilk dükkanının salonuna kattın.")
 	_button("Kapat", "x", UiKit.NEUTRAL, UiKit.TEXT, _close)
 
 

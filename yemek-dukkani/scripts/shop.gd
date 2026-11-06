@@ -81,10 +81,19 @@ const TABLES := [
 ## Yan duvardaki geçidin z aralığı ve yüksekliği; dış kenarlar.
 const OPENING_Z := [-8.6, -1.6]
 const OPENING_TOP := 3.0
-const ANNEX_X := -12.2
-const GARDEN_X := 12.2
-const ANNEX_TABLES := [Vector3(-8.9, 0, -3.0), Vector3(-8.9, 0, -5.3), Vector3(-8.9, 0, -7.6)]
-const GARDEN_TABLES := [Vector3(8.9, 0, -3.0), Vector3(8.9, 0, -5.3), Vector3(8.9, 0, -7.6)]
+## Komşu dükkan birleştirilince (Progression "annex" sol, "annex_r" sağ) yan duvar
+## açılır, komşunun bütün salonu (12 m) bizim olur: 6 masa.
+const ANNEX_OUTER := 18.0
+const ANNEX_TABLES := [
+	Vector3(-9.6, 0, -3.0), Vector3(-9.6, 0, -5.3), Vector3(-9.6, 0, -7.6),
+	Vector3(-14.4, 0, -3.0), Vector3(-14.4, 0, -5.3), Vector3(-14.4, 0, -7.6),
+]
+## Ön bahçe: dükkanın önündeki şerit (arka duvarın dışı). Masalar kapının iki yanında,
+## önlerinden geçen şeritten yaklaşılır.
+const OUTSIDE_Z := -10.15
+const PATIO_TABLE_Z := -11.5
+const PATIO_LANE_Z := -12.4
+const PATIO_TABLES := [Vector3(-2.7, 0, -11.5), Vector3(2.7, 0, -11.5), Vector3(-4.85, 0, -11.5), Vector3(4.85, 0, -11.5)]
 ## Masanın merkezinden sandalyeye uzaklık (x ekseninde).
 const SEAT_OFFSET := 0.85
 ## Masaya yaklaşırken kullanılan, masaların önündeki boş şerit.
@@ -170,8 +179,13 @@ var _street := Street.new()
 var neighborhood: Neighborhood
 ## Yan duvarlar: side (-1 sol, 1 sağ) -> [kapalı, açık]
 var _side_walls := {}
-var _annex: Node3D
-var _garden: Node3D
+## side (-1 / 1) -> birleşen komşu salonu
+var _annexes := {}
+var _patio: Node3D
+var _patio_floor: MeshInstance3D
+## Gölgelik çeşitleri: 1 şemsiye (masalarda), 2 tente, 3 pergola
+var _patio_shades := {}
+var _patio_ornaments := {}
 ## Tavanla birlikte gizlenen ek tavanlar (Yan Salon)
 var _extra_ceilings: Array[Node3D] = []
 var _expansions_synced := false
@@ -507,7 +521,7 @@ func _pick_up(customer: ShopCustomer, tray: Node3D) -> void:
 	# Açık masaların ucundaki boş bekleme yerlerinden birine gider.
 	var spot := -1
 	for i in tables.size():
-		if i < standing.size() and standing[i] == null:
+		if i < standing.size() and standing[i] == null and not is_outside(tables[i]["pos"]):
 			spot = i
 			break
 	if spot == -1:
@@ -527,6 +541,24 @@ func stand_spot(i: int) -> Vector3:
 ## Salonda masaların arasından geçmeden yürünen yol: önce bulunduğu sıranın
 ## şeridinden koridor kenarına, oradan hedefin sırasına, sonra hedefe.
 static func corridor_path(from: Vector3, to: Vector3) -> Array:
+	var from_out := is_outside(from)
+	var to_out := is_outside(to)
+	if from_out and to_out:
+		return [Vector3(from.x, 0, PATIO_LANE_Z), Vector3(to.x, 0, PATIO_LANE_Z), to]
+	if to_out:
+		# İçeriden ön bahçeye: koridordan kapıya, kapıdan bahçe şeridine
+		var lane := Vector3(SIDE_LANE_X * (signf(from.x) if absf(from.x) > 0.01 else 1.0), 0, DOOR.z + 0.7)
+		var out := _inside_path(from, lane)
+		out.append_array([DOOR, Vector3(0, 0, PATIO_LANE_Z), Vector3(to.x, 0, PATIO_LANE_Z), to])
+		return out
+	if from_out:
+		var back: Array = [Vector3(from.x, 0, PATIO_LANE_Z), Vector3(0, 0, PATIO_LANE_Z), DOOR, Vector3(0, 0, DOOR.z + 0.7)]
+		back.append_array(_inside_path(Vector3(0, 0, DOOR.z + 0.7), to))
+		return back
+	return _inside_path(from, to)
+
+
+static func _inside_path(from: Vector3, to: Vector3) -> Array:
 	var a := signf(from.x) if absf(from.x) > 0.01 else signf(to.x)
 	if a == 0.0:
 		a = 1.0
@@ -546,6 +578,12 @@ func _send_to_seat(customer: ShopCustomer, from: Vector3) -> void:
 	var side := signf(pos.x - table_pos.x)
 	var lane_z := table_pos.z + LANE_OFFSET
 	var path: Array = []
+	if is_outside(table_pos):
+		# Ön bahçe: kapıdan çıkıp masanın önündeki şeritten sandalyeye
+		path = corridor_path(from, Vector3(pos.x, 0, PATIO_LANE_Z))
+		path.append(pos)
+		customer.go_sit(path, -side * PI * 0.5)
+		return
 	if from.z > AISLE_FRONT.z:
 		# Kasadan geliyor: önce koridorun yan şeridine geçer.
 		var lane_x := signf(table_pos.x) * SIDE_LANE_X
@@ -831,6 +869,9 @@ func _on_finished_eating(customer: ShopCustomer) -> void:
 	_post_review(customer)
 	var pos: Vector3 = seat["pos"]
 	var table_pos: Vector3 = seat["table"]["pos"]
+	if is_outside(table_pos):
+		customer.leave(_exit_path(pos, signf(pos.x)))
+		return
 	var lane_z := table_pos.z + LANE_OFFSET
 	var path: Array = [Vector3(pos.x, 0, lane_z)]
 	path.append_array(_exit_path(Vector3(0, 0, lane_z), signf(table_pos.x)))
@@ -846,6 +887,9 @@ func exit_path(from: Vector3, side: float) -> Array:
 func _exit_path(from: Vector3, side: float) -> Array:
 	var lane_x := side * SIDE_LANE_X
 	var away := side if side != 0.0 else 1.0
+	if is_outside(from):
+		# Ön bahçeden doğrudan kaldırıma
+		return [Vector3(from.x, 0, PATIO_LANE_Z), Vector3(from.x, 0, Street.SIDEWALK_Z), Vector3(away * STREET_END_X, 0, Street.SIDEWALK_Z)]
 	return [
 		Vector3(lane_x, 0, minf(from.z, AISLE_FRONT.z)), Vector3(lane_x, 0, DOOR.z + 0.7), DOOR,
 		Vector3(0, 0, -10.8), Vector3(away * 1.0, 0, Street.SIDEWALK_Z), Vector3(away * STREET_END_X, 0, Street.SIDEWALK_Z),
@@ -903,37 +947,42 @@ func _sync_tables() -> void:
 			standing[i] = null
 
 
-## Açık masaların yerleri: salon (kurulum + Yeni Masalar), Yan Salon ve Bahçe.
+## Açık masaların yerleri: salon (kurulum + Yeni Masalar), birleşen komşu
+## salonları ve ön bahçe.
 static func table_positions() -> Array:
 	var list: Array = []
 	var count := mini(GameState.decor["tables"] + 2 * GameState.upgrade_level("tables"), TABLES.size())
 	for i in count:
 		list.append(TABLES[i])
-	if GameState.upgrade_level("annex") > 0:
-		list.append_array(ANNEX_TABLES)
-	if GameState.upgrade_level("garden") > 0:
-		list.append_array(GARDEN_TABLES)
+	for side in [-1.0, 1.0]:
+		if GameState.upgrade_level(annex_id(side)) > 0:
+			for pos: Vector3 in ANNEX_TABLES:
+				list.append(Vector3(pos.x * -side, 0, pos.z))
+	if int(GameState.decor["patio_floor"]) > 0:
+		for i in mini(int(GameState.decor["patio_tables"]), PATIO_TABLES.size()):
+			list.append(PATIO_TABLES[i])
 	return list
 
 
-## Genişletmeye göre yan duvarı açar, ek salonu / bahçeyi gösterir.
+static func annex_id(side: float) -> String:
+	return "annex" if side < 0 else "annex_r"
+
+
+static func is_outside(pos: Vector3) -> bool:
+	return pos.z < OUTSIDE_Z
+
+
+## Birleştirmeye göre yan duvarı açar, komşu salonunu gösterir.
 func _sync_expansions() -> void:
-	var annex := GameState.upgrade_level("annex") > 0
-	var garden := GameState.upgrade_level("garden") > 0
 	for side in _side_walls:
-		var open := annex if side < 0 else garden
+		var open := GameState.upgrade_level(annex_id(side)) > 0
 		(_side_walls[side][0] as Node3D).visible = not open
 		(_side_walls[side][1] as Node3D).visible = open
-	if _expansions_synced:
-		if not _annex.visible and annex:
-			_pop_in(_annex)
-		if not _garden.visible and garden:
-			_pop_in(_garden)
+		var annex: Node3D = _annexes[side]
+		if _expansions_synced and open and not annex.visible:
+			_pop_in(annex)
+		annex.visible = open
 	_expansions_synced = true
-	_annex.visible = annex
-	_garden.visible = garden
-	_street.set_side_open(-1, annex)
-	_street.set_side_open(1, garden)
 
 
 ## Mahalle modunda kameranın önünden araba geçmesin.
@@ -951,105 +1000,158 @@ func _pop_in(node: Node3D) -> void:
 	Sfx.play("level_up", 0.0, Main.SHOP)
 
 
-## Yan Salon: solda yan dükkan; aynı zemin ve duvar boyası, arka duvarda
-## sokağa bakan vitrin, dış duvarda iki pencere, tavanda lamba.
-func _build_annex() -> void:
-	_annex = Node3D.new()
-	_annex.visible = false
-	add_child(_annex)
-	var x0 := ANNEX_X
-	var x1 := -6.0
+## Birleşen komşu salonu (side -1 sol, 1 sağ): aynı zemin ve boya, sokak
+## tarafında iki vitrin, dış duvarda aplikler, tavanda iki lamba.
+func _build_annex(side: float) -> void:
+	var annex := Node3D.new()
+	annex.visible = false
+	add_child(annex)
+	_annexes[int(side)] = annex
+	var x_in := 6.0 * side
+	var x_out := ANNEX_OUTER * side
+	var x0 := minf(x_in, x_out)
+	var x1 := maxf(x_in, x_out)
 	var cx := (x0 + x1) / 2.0
 	var w := x1 - x0
-	_annex.add_child(Util.box(Vector3(w, 0.1, 12.3), _floor_mat, Vector3(cx, -0.04, -3.95)))
+	annex.add_child(Util.box(Vector3(w, 0.1, 12.3), _floor_mat, Vector3(cx, -0.04, -3.95)))
 	var ceiling := Util.no_shadow(Util.box(Vector3(w, 0.1, 12.3), Color("#fbf3e6"), Vector3(cx, 4.5, -3.95)))
-	_annex.add_child(ceiling)
+	annex.add_child(ceiling)
 	_extra_ceilings.append(ceiling)
-	# Arka duvar (sokak tarafı): ortada vitrin
-	var shop_window := [cx - 1.3, cx + 1.3, BACK_WINDOW_BOTTOM, BACK_WINDOW_BOTTOM + BACK_WINDOW_SIZE.y]
-	_wall(true, -10.1, x0, x1, 4.5, 0.2, _wall_mat, [shop_window], _annex)
-	_wall(true, -10.08, x0, x1, 1.0, 0.22, _panel_mat, [shop_window], _annex)
-	_window(Vector3(cx, BACK_WINDOW_BOTTOM, -10.1), Vector2(2.6, BACK_WINDOW_SIZE.y), 0.0, _annex)
-	# Dış duvar: iki pencere
+	# Sokak tarafı: iki vitrin
 	var holes := []
-	for z: float in SIDE_WINDOW_Z:
-		holes.append([z - SIDE_WINDOW_SIZE.x / 2, z + SIDE_WINDOW_SIZE.x / 2, WINDOW_BOTTOM, WINDOW_BOTTOM + SIDE_WINDOW_SIZE.y])
-	_wall(false, x0, -10.2, 2.2, 4.5, 0.2, _side_mat, holes, _annex)
-	_annex.add_child(Util.no_shadow(Util.box(Vector3(0.22, 1.0, 12.4), _panel_mat, Vector3(x0 + 0.01, 0.5, -4.0))))
-	for z: float in SIDE_WINDOW_Z:
-		_window(Vector3(x0, WINDOW_BOTTOM, z), SIDE_WINDOW_SIZE, 90.0, _annex)
-	# Dış duvarın üstü (arka duvarla birleşen köşe)
-	for z in [-5.3]:
-		var hanging := Util.model("lighting/tavan_lambasi", Vector3(cx, 3.62, z), 0.0, 1.2)
-		_annex.add_child(hanging)
+	for wx in [cx - 3.0, cx + 3.0]:
+		holes.append([wx - 1.3, wx + 1.3, BACK_WINDOW_BOTTOM, BACK_WINDOW_BOTTOM + BACK_WINDOW_SIZE.y])
+	_wall(true, -10.1, x0, x1, 4.5, 0.2, _wall_mat, holes, annex)
+	_wall(true, -10.08, x0, x1, 1.0, 0.22, _panel_mat, holes, annex)
+	for wx in [cx - 3.0, cx + 3.0]:
+		_window(Vector3(wx, BACK_WINDOW_BOTTOM, -10.1), Vector2(2.6, BACK_WINDOW_SIZE.y), 0.0, annex)
+	# Dış duvar (yanındaki komşuya bitişik)
+	_wall(false, x_out, -10.2, 2.2, 4.5, 0.2, _side_mat, [], annex)
+	annex.add_child(Util.no_shadow(Util.box(Vector3(0.22, 1.0, 12.4), _panel_mat, Vector3(x_out - side * 0.01, 0.5, -4.0))))
+	for z in [-2.4, -6.2]:
+		var sconce := Util.model("lighting/duvar_lambasi", Vector3(x_out - side * 0.1, 2.3, z), -side * 90.0, 1.2)
+		annex.add_child(sconce)
+		_sconces.append(sconce)
+	for lx in [cx - 2.4, cx + 2.4]:
+		var hanging := Util.model("lighting/tavan_lambasi", Vector3(lx, 3.62, -5.3), 0.0, 1.2)
+		annex.add_child(hanging)
 		_ceiling_lamps.append(hanging)
-		var bulb := Util.sphere(0.08, Color("#ffd27a"), Vector3(cx, 3.66, z))
-		_annex.add_child(bulb)
+		var bulb := Util.sphere(0.08, Color("#ffd27a"), Vector3(lx, 3.66, -5.3))
+		annex.add_child(bulb)
 		_bulbs.append(bulb)
-	var lamp := OmniLight3D.new()
-	lamp.position = Vector3(cx, 3.4, -5.0)
-	lamp.light_color = Color("#ffd9a0")
-	lamp.omni_range = 7.5
-	_annex.add_child(lamp)
-	_lamps.append(lamp)
-	# Köşelerde bitki
-	for pos in [Vector3(x0 + 0.6, 0, -9.4), Vector3(x0 + 0.6, 0, 1.4)]:
-		_annex.add_child(Util.cylinder(0.25, 0.5, Color("#c0703f"), pos + Vector3(0, 0.25, 0)))
-		_annex.add_child(Util.sphere(0.42, Color("#4f9a52"), pos + Vector3(0, 0.85, 0)))
+		var lamp := OmniLight3D.new()
+		lamp.position = Vector3(lx, 3.4, -5.0)
+		lamp.light_color = Color("#ffd9a0")
+		lamp.omni_range = 7.0
+		annex.add_child(lamp)
+		_lamps.append(lamp)
+	for pos in [Vector3(x_out - side * 0.6, 0, -9.4), Vector3(x_out - side * 0.6, 0, 1.4)]:
+		annex.add_child(Util.cylinder(0.25, 0.5, Color("#c0703f"), pos + Vector3(0, 0.25, 0)))
+		annex.add_child(Util.sphere(0.42, Color("#4f9a52"), pos + Vector3(0, 0.85, 0)))
 
 
-## Bahçe Teras: sağda ahşap zemin, alçak çit ve çiçek saksıları, üstte pergola
-## ve ampul zinciri. Masalarda şemsiye var (_build_table).
-func _build_garden() -> void:
-	_garden = Node3D.new()
-	_garden.visible = false
-	add_child(_garden)
-	var x0 := 6.0
-	var x1 := GARDEN_X
-	var cx := (x0 + x1) / 2.0
-	var w := x1 - x0
-	var deck := Util.tile_material(Color("#b98552"), Color("#a9784a"), 0.9)
-	_garden.add_child(Util.box(Vector3(w, 0.12, 11.6), deck, Vector3(cx, -0.02, -4.2)))
+## Ön bahçe: kapının iki yanında zemin, gölgelik (tente / pergola; şemsiyeler
+## masalarda), ampuller, fenerler ve kaldırım kenarında saksılar.
+func _build_patio() -> void:
+	_patio = Node3D.new()
+	add_child(_patio)
+	var depth := Street.WALL_Z - Street.PATIO_EDGE
+	var cz := (Street.WALL_Z + Street.PATIO_EDGE) / 2.0
+	_patio_floor = Util.box(Vector3(11.8, 0.06, depth), Color.WHITE, Vector3(0, 0.02, cz))
+	_patio.add_child(_patio_floor)
+	# Kaldırımla bahçeyi ayıran alçak bordür (kapı önünde boşluk)
+	for side in [-1.0, 1.0]:
+		_patio.add_child(Util.box(Vector3(4.5, 0.14, 0.12), Color("#e9e4dc"), Vector3(side * 3.65, 0.07, Street.PATIO_EDGE + 0.06)))
+
+	# Tente: duvardan kaldırıma doğru eğik çizgili bez, önde iki direk
+	var awning := Node3D.new()
+	_patio.add_child(awning)
+	var stripes := 14
+	for i in stripes:
+		var stripe := Util.no_shadow(Util.box(Vector3(11.8 / stripes, 0.05, depth + 0.3),
+			Color("#d6452f") if i % 2 == 0 else Color("#fbf7f0"), Vector3(-5.9 + (i + 0.5) * 11.8 / stripes, 2.75, cz)))
+		stripe.rotation_degrees.x = -14
+		awning.add_child(stripe)
+	for x in [-5.8, 5.8]:
+		awning.add_child(Util.cylinder(0.05, 2.45, Color("#3a3d42"), Vector3(x, 1.22, Street.PATIO_EDGE + 0.15)))
+	_patio_shades[2] = awning
+
+	# Pergola: ahşap dikmeler, kirişler ve sarmaşık
+	var pergola := Node3D.new()
+	_patio.add_child(pergola)
 	var wood := Color("#7a4b32")
-	# Alçak çit: dış kenarda ve önde/arkada
-	for z in range(-10, 2):
-		_garden.add_child(Util.box(Vector3(0.08, 0.8, 0.08), Color("#f4efe6"), Vector3(x1 - 0.1, 0.4, z + 0.4)))
-	for y in [0.3, 0.65]:
-		_garden.add_child(Util.box(Vector3(0.05, 0.08, 11.6), Color("#f4efe6"), Vector3(x1 - 0.1, y, -4.2)))
-		for z in [-9.95, 1.55]:
-			_garden.add_child(Util.box(Vector3(w, 0.08, 0.05), Color("#f4efe6"), Vector3(cx, y, z)))
-	# Pergola: köşelerde dikmeler, üstte kirişler
-	for px in [x0 + 0.3, x1 - 0.3]:
-		for pz in [-9.7, -4.2, 1.3]:
-			_garden.add_child(Util.box(Vector3(0.16, 3.2, 0.16), wood, Vector3(px, 1.6, pz)))
-		_garden.add_child(Util.box(Vector3(0.14, 0.18, 11.4), wood, Vector3(px, 3.25, -4.2)))
+	for x in [-5.8, -1.5, 1.5, 5.8]:
+		pergola.add_child(Util.box(Vector3(0.16, 2.9, 0.16), wood, Vector3(x, 1.45, Street.PATIO_EDGE + 0.15)))
+	pergola.add_child(Util.box(Vector3(11.9, 0.18, 0.16), wood, Vector3(0, 2.95, Street.PATIO_EDGE + 0.15)))
 	for i in 9:
-		_garden.add_child(Util.no_shadow(Util.box(Vector3(w - 0.4, 0.1, 0.1), wood.lightened(0.1), Vector3(cx, 3.38, -9.6 + i * 1.36))))
-	# Ampul zinciri: pergolanın altında, iki sıra
+		pergola.add_child(Util.no_shadow(Util.box(Vector3(0.12, 0.12, depth + 0.2), wood.lightened(0.1), Vector3(-5.6 + i * 1.4, 3.02, cz))))
+	for i in 18:
+		pergola.add_child(Util.no_shadow(Util.sphere(0.22, Color("#5c9a4a") if i % 2 else Color("#6aab52"),
+			Vector3(-5.6 + i * 0.66, 3.12, cz + randf_range(-0.9, 0.9)))))
+	_patio_shades[3] = pergola
+
+	# Ampul zinciri
+	var lights := Node3D.new()
+	_patio.add_child(lights)
 	var colors := [Color("#ffd166"), Color("#fff1c4"), Color("#ff9f43")]
-	for row in [x0 + 1.4, x1 - 1.4]:
-		for i in 23:
-			var z := -9.6 + i * 0.5
-			var y := 3.05 - 0.15 * absf(sin(z / 1.8 * PI))
-			var mat := StandardMaterial3D.new()
-			mat.albedo_color = colors[i % colors.size()]
-			mat.emission_enabled = true
-			mat.emission = colors[i % colors.size()]
-			mat.emission_energy_multiplier = 1.4
-			_garden.add_child(Util.no_shadow(Util.sphere(0.05, mat, Vector3(row, y, z))))
+	for i in 25:
+		var x := -5.8 + i * (11.6 / 24.0)
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = colors[i % colors.size()]
+		mat.emission_enabled = true
+		mat.emission = colors[i % colors.size()]
+		mat.emission_energy_multiplier = 1.5
+		lights.add_child(Util.no_shadow(Util.sphere(0.05, mat, Vector3(x, 2.55 - 0.18 * absf(sin(x / 1.45 * PI)), Street.PATIO_EDGE + 0.4))))
 	var glow := OmniLight3D.new()
-	glow.position = Vector3(cx, 2.8, -4.5)
+	glow.position = Vector3(0, 2.4, cz)
 	glow.light_color = Color("#ffe1a8")
-	glow.omni_range = 7.0
-	glow.light_energy = 0.6
-	_garden.add_child(glow)
-	# Çiçek saksıları çitin önünde
+	glow.omni_range = 6.0
+	glow.light_energy = 0.5
+	lights.add_child(glow)
+	_patio_ornaments["patio_lights"] = lights
+
+	# Fener direkleri
+	var lanterns := Node3D.new()
+	_patio.add_child(lanterns)
+	for x in [-5.75, 5.75]:
+		lanterns.add_child(Util.cylinder(0.06, 2.4, Color("#2b2d33"), Vector3(x, 1.2, Street.PATIO_EDGE + 0.35)))
+		lanterns.add_child(Util.box(Vector3(0.28, 0.36, 0.28), Color("#2b2d33"), Vector3(x, 2.5, Street.PATIO_EDGE + 0.35)))
+		var lamp_mat := StandardMaterial3D.new()
+		lamp_mat.albedo_color = Color("#ffe6a8")
+		lamp_mat.emission_enabled = true
+		lamp_mat.emission = Color("#ffd27a")
+		lamp_mat.emission_energy_multiplier = 1.8
+		lanterns.add_child(Util.no_shadow(Util.box(Vector3(0.2, 0.26, 0.2), lamp_mat, Vector3(x, 2.5, Street.PATIO_EDGE + 0.35))))
+	_patio_ornaments["patio_lanterns"] = lanterns
+
+	# Kaldırım kenarında saksılar
+	var plants := Node3D.new()
+	_patio.add_child(plants)
 	var petals := [Color("#ff7aa2"), Color("#ffd166"), Color("#c77dff"), Color("#ff9f43")]
-	for z in [-8.6, -6.4, -4.2, -1.9, 0.4]:
-		_garden.add_child(Util.box(Vector3(0.45, 0.4, 0.9), Color("#c0703f"), Vector3(x1 - 0.45, 0.2, z)))
+	for x in [-5.0, -3.6, -2.2, 2.2, 3.6, 5.0]:
+		plants.add_child(Util.box(Vector3(0.9, 0.42, 0.4), Color("#c0703f"), Vector3(x, 0.21, Street.PATIO_EDGE + 0.3)))
 		for k in 3:
-			_garden.add_child(Util.no_shadow(Util.sphere(0.16, Color("#4f9a52"), Vector3(x1 - 0.45, 0.48, z - 0.3 + k * 0.3))))
-			_garden.add_child(Util.no_shadow(Util.sphere(0.08, petals[(k + int(z)) % petals.size()], Vector3(x1 - 0.42, 0.6, z - 0.28 + k * 0.3))))
+			plants.add_child(Util.no_shadow(Util.sphere(0.17, Color("#4f9a52"), Vector3(x - 0.28 + k * 0.28, 0.5, Street.PATIO_EDGE + 0.3))))
+			plants.add_child(Util.no_shadow(Util.sphere(0.08, petals[(k + int(x + 9.0)) % petals.size()], Vector3(x - 0.26 + k * 0.28, 0.62, Street.PATIO_EDGE + 0.26))))
+	_patio_ornaments["patio_plants"] = plants
+
+
+## Ön bahçenin görünümü dekora göre.
+func _apply_patio(decor: Dictionary) -> void:
+	var floor_index: int = decor["patio_floor"]
+	_patio.visible = floor_index > 0
+	if floor_index > 0:
+		var colors := [Color.WHITE, Color("#b98552"), Color("#a7a29a"), Color("#7fb366")]
+		var dark := [Color.WHITE, Color("#a9784a"), Color("#96918a"), Color("#c9c4bb")]
+		_patio_floor.material_override = Util.tile_material(colors[floor_index], dark[floor_index], 0.9)
+	var shade: int = decor["patio_shade"]
+	for key in _patio_shades:
+		(_patio_shades[key] as Node3D).visible = shade == key
+	for id in _patio_ornaments:
+		(_patio_ornaments[id] as Node3D).visible = Decor.ornament_on(decor, id)
+	for table in tables:
+		if table.has("umbrella"):
+			(table["umbrella"] as Node3D).visible = shade == 1
 
 
 # --- Kirli masalar ------------------------------------------------------------
@@ -1554,6 +1656,9 @@ func _build_room() -> void:
 		_window(Vector3(x, BACK_WINDOW_BOTTOM, -10.1), BACK_WINDOW_SIZE, 0.0)
 	_build_door()
 	add_child(_street)
+	# Yanlarda bahçe yok, bitişik komşu dükkanlar var.
+	_street.set_side_open(-1, true)
+	_street.set_side_open(1, true)
 	neighborhood = Neighborhood.new()
 	add_child(neighborhood)
 	# Tabela: boyutu dükkanın adına göre _layout_sign'da ayarlanır.
@@ -1582,9 +1687,6 @@ func _build_room() -> void:
 		_sign_lamps.append(lamp)
 
 	# Yan duvarlar, lambri ve pencereler (dışarıda bahçe ve ağaçlar)
-	var side_holes := []
-	for z: float in SIDE_WINDOW_Z:
-		side_holes.append([z - SIDE_WINDOW_SIZE.x / 2, z + SIDE_WINDOW_SIZE.x / 2, WINDOW_BOTTOM, WINDOW_BOTTOM + SIDE_WINDOW_SIZE.y])
 	# Her yan duvarın iki hali var: kapalı (pencereli) ve genişletme alınınca
 	# açılan geniş geçitli hali (_sync_expansions).
 	for side in [-1.0, 1.0]:
@@ -1595,10 +1697,9 @@ func _build_room() -> void:
 		opened.visible = false
 		add_child(opened)
 		_side_walls[int(side)] = [closed, opened]
-		_wall(false, x, -10.0, 2.2, 4.5, 0.2, _side_mat, side_holes, closed)
+		# Yanlarda komşu dükkanlar bitişik: yan duvarlar penceresiz.
+		_wall(false, x, -10.0, 2.2, 4.5, 0.2, _side_mat, [], closed)
 		closed.add_child(Util.no_shadow(Util.box(Vector3(0.22, 1.0, 12.2), _panel_mat, Vector3(x - side * 0.01, 0.5, -3.9))))
-		for z: float in SIDE_WINDOW_Z:
-			_window(Vector3(x, WINDOW_BOTTOM, z), SIDE_WINDOW_SIZE, -side * 90.0, closed)
 		# Geniş geçit: üstte ahşap kiriş, iki yanında dikme
 		var gap := [OPENING_Z[0], OPENING_Z[1], 0.0, OPENING_TOP]
 		_wall(false, x, -10.0, 2.2, 4.5, 0.2, _side_mat, [gap], opened)
@@ -1615,8 +1716,9 @@ func _build_room() -> void:
 			(self if z > OPENING_Z[1] else closed).add_child(sconce)
 			_sconces.append(sconce)
 
-	_build_annex()
-	_build_garden()
+	_build_annex(-1)
+	_build_annex(1)
+	_build_patio()
 	_build_ruin()
 	_build_rugs()
 	_build_ornaments()
@@ -1706,12 +1808,6 @@ func _build_ruin() -> void:
 			var board := Util.box(Vector3(BACK_WINDOW_SIZE.x + 0.4, 0.24, 0.04), plank, Vector3(x, y, -9.94))
 			board.rotation_degrees.z = randf_range(-8, 8)
 			_boards.add_child(board)
-	for side in [-1.0, 1.0]:
-		for z: float in SIDE_WINDOW_Z:
-			for y in [1.4, 1.95, 2.5]:
-				var board := Util.box(Vector3(0.04, 0.24, SIDE_WINDOW_SIZE.x + 0.4), plank, Vector3(side * 5.86, y, z))
-				board.rotation_degrees.x = 7 if y > 2 else -5
-				_boards.add_child(board)
 
 
 ## Dekoru uygular: boya, zemin, temizlik, pencere, lamba, bitki, tabela, kasa, masa.
@@ -1758,6 +1854,7 @@ func _apply_decor() -> void:
 	for c in _extra_ceilings:
 		c.visible = _ceiling.visible
 	_sync_tables()
+	_apply_patio(decor)
 
 
 ## Kuşbakışı kamerada tavan kaldırılır.
@@ -1914,9 +2011,13 @@ func _build_table(pos: Vector3) -> void:
 
 	for side in [-1.0, 1.0]:
 		_build_chair(root, Vector3(side * SEAT_OFFSET, 0, 0), side)
-	if pos.x > 6.0:
-		# Bahçe masası: ortasında şemsiye
-		root.add_child(Util.cylinder(0.03, 2.3, Color("#e9e4dc"), Vector3(0, 1.15, 0.15)))
+	var umbrella: Node3D = null
+	if is_outside(pos):
+		# Bahçe masası: gölgelik "Şemsiyeler" seçiliyse ortasında şemsiye
+		umbrella = Node3D.new()
+		umbrella.visible = int(GameState.decor["patio_shade"]) == 1
+		root.add_child(umbrella)
+		umbrella.add_child(Util.cylinder(0.03, 2.3, Color("#e9e4dc"), Vector3(0, 1.15, 0.15)))
 		var canopy := MeshInstance3D.new()
 		var cone := CylinderMesh.new()
 		cone.top_radius = 0.04
@@ -1924,10 +2025,10 @@ func _build_table(pos: Vector3) -> void:
 		cone.height = 0.45
 		cone.radial_segments = 8
 		canopy.mesh = cone
-		canopy.material_override = Util.material([Color("#e8553e"), Color("#f4efe6"), Color("#3f8f6a")][int(-pos.z / 2.3) % 3])
+		canopy.material_override = Util.material([Color("#e8553e"), Color("#f4efe6"), Color("#3f8f6a"), Color("#ffd166")][PATIO_TABLES.find(pos) % 4])
 		canopy.position = Vector3(0, 2.35, 0.15)
 		canopy.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		root.add_child(canopy)
+		umbrella.add_child(canopy)
 
 	# Kirliyken üstünde süngerli işaret çıkar; dokununca temizlenir.
 	var mark := Icons.sprite(Icons.badge("spray-can", UiKit.BLUE), 1.95)
@@ -1940,6 +2041,8 @@ func _build_table(pos: Vector3) -> void:
 	progress.visible = false
 	root.add_child(progress)
 	var table := { "pos": pos, "customer": null, "dirty": false, "tray": null, "cleaner": null, "mark": mark, "progress": progress, "root": root, "top": null }
+	if umbrella:
+		table["umbrella"] = umbrella
 	_set_table_top(table)
 	var collider := Util.collider_box(root, Vector3(1.3, 1.0, 1.3), Vector3(0, 0.5, 0))
 	collider.set_meta("tap", _on_table_tapped.bind(table))

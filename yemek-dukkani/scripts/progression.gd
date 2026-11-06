@@ -24,11 +24,12 @@ const UPGRADES := {
 	"comfort": { "name": "Müzik ve Dekor", "icon": "music", "desc": "Müşteriler %12 daha sabırlı", "costs": [180, 390, 750], "levels": [2, 5, 8] },
 	"register2": { "name": "Ek Kasa", "icon": "receipt", "desc": "İkinci kasa: kasiyer tutunca sıra ikiye bölünür", "costs": [750], "levels": [3] },
 	# Genişletmeler (EXPANSIONS): dükkan büyür, masa ve müşteri artar, kira da artar.
-	"annex": { "name": "Yan Salon", "icon": "store", "desc": "Sol duvar yıkılır, yan dükkan salona katılır: +3 masa, daha çok müşteri", "costs": [2400], "levels": [4], "rent": 60 },
-	"garden": { "name": "Bahçe Teras", "icon": "sprout", "desc": "Sağ duvar açılır, pergolalı bahçeye şemsiyeli masalar: +3 masa, daha sabırlı müşteri", "costs": [4200], "levels": [6], "rent": 90 },
+	# Komşu birleştirme (Mahalle'de bitişik komşu alınıp duvar yıkılınca verilir; satılmaz).
+	"annex": { "name": "Sol Salon", "icon": "store", "desc": "Soldaki komşu dükkan salona katıldı", "costs": [0], "levels": [1], "rent": 70, "hidden": true },
+	"annex_r": { "name": "Sağ Salon", "icon": "store", "desc": "Sağdaki komşu dükkan salona katıldı", "costs": [0], "levels": [1], "rent": 70, "hidden": true },
 }
-## Geliştirmeler sayfasında "Dükkanı Büyüt" başlığı altında gösterilenler.
-const EXPANSIONS := ["annex", "garden"]
+## Komşu birleştirmeleri (salon büyür, kira artar)
+const EXPANSIONS := ["annex", "annex_r"]
 ## Her genişletme içeride aynı anda bulunabilecek müşteriyi artırır, geliş aralığını kısaltır.
 const EXPANSION_CUSTOMERS := 2
 const EXPANSION_SPAWN := 0.88
@@ -195,7 +196,8 @@ static func patience(level: int, item_count: int, comfort_level: int) -> float:
 	if calm():
 		base *= CALM_PATIENCE_FACTOR
 	# Bahçe teras: açık havada beklemek daha keyifli (+%10 sabır)
-	return base * (1.0 + 0.12 * comfort_level) * (1.1 if GameState.upgrade_level("garden") > 0 else 1.0)
+	# Ön bahçe: dışarıda beklemek daha keyifli (+%8 sabır)
+	return base * (1.0 + 0.12 * comfort_level) * (1.08 if int(GameState.decor.get("patio_floor", 0)) > 0 else 1.0)
 
 
 ## Kasadaki tek yerin arkasında sırada bekleyebilecek en fazla kişi
@@ -297,6 +299,6 @@ static func upgrade_required_level(id: String, current: int) -> int:
 static func unlocks_at(level: int) -> Array[String]:
 	var names: Array[String] = []
 	for id in UPGRADES:
-		if (UPGRADES[id]["levels"] as Array).has(level):
+		if not UPGRADES[id].get("hidden", false) and (UPGRADES[id]["levels"] as Array).has(level):
 			names.append(UPGRADES[id]["name"])
 	return names

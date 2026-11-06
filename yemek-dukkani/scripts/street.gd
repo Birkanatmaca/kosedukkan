@@ -10,10 +10,12 @@ extends Node3D
 ## Dükkanın arka duvarının dış yüzü
 const WALL_Z := -10.2
 ## Kaldırımın ortası (müşteriler burada yürür) ve yol şeritleri
-const SIDEWALK_Z := -11.4
-const ROAD_NEAR := -12.8
-const ROAD_FAR := -18.4
-const LANES := [-14.2, -17.0]
+## Dükkanların önünde ön bahçe şeridi (WALL_Z..PATIO_EDGE), sonra kaldırım.
+const PATIO_EDGE := -12.8
+const SIDEWALK_Z := -13.8
+const ROAD_NEAR := -15.2
+const ROAD_FAR := -20.8
+const LANES := [-16.6, -19.4]
 ## Arabalar bu x aralığında görünür, dışında silinir.
 const CAR_RANGE := 24.0
 const CAR_COLORS := [
@@ -130,8 +132,8 @@ func _build_buildings() -> void:
 
 func _build_trees() -> void:
 	# Kaldırım ağaçları (arka pencerelerden) ve yan bahçedeki ağaçlar
-	for x in [-8.5, 8.5, -21.2, 21.2]:
-		_tree(Vector3(x, 0, -12.1), 1.0)
+	for x in [-29.5, 29.5]:
+		_tree(Vector3(x, 0, ROAD_NEAR + 0.7), 1.0)
 	for side in [-1.0, 1.0]:
 		_group = int(side)
 		for pos in [Vector3(7.6, 0, -8.2), Vector3(9.8, 0, -5.0), Vector3(7.4, 0, -3.4), Vector3(10.5, 0, -1.0), Vector3(8.0, 0, 1.6), Vector3(12.5, 0, -7.0)]:
@@ -154,7 +156,7 @@ func _tree(pos: Vector3, size: float) -> void:
 
 
 func _build_lamps() -> void:
-	for x in [-5.0, 5.0, -13.0, 13.0]:
+	for x in [-6.0, 6.0, -18.0, 18.0]:
 		_add("cylinder", Vector3(0.12, 3.6, 0.12), Color("#3a3f47"), Vector3(x, 1.8, ROAD_NEAR + 0.5))
 		_add("box", Vector3(0.12, 0.08, 0.7), Color("#3a3f47"), Vector3(x, 3.6, ROAD_NEAR + 0.75))
 		_add("sphere", Vector3(0.26, 0.26, 0.26), Color("#ffe6a8"), Vector3(x, 3.5, ROAD_NEAR + 1.0))

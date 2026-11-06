@@ -1006,7 +1006,7 @@ func _build_upgrades_page() -> Control:
 	list.add_theme_constant_override("separation", 10)
 	scroll.add_child(list)
 
-	# Dükkanı büyüt: genişletmeler ve günlük kira/fatura özeti
+	# Dükkanı büyüt: komşu dükkanlar ve günlük kira/fatura özeti
 	var expand_title := HBoxContainer.new()
 	expand_title.add_theme_constant_override("separation", 8)
 	expand_title.add_child(UiKit.icon_rect("store", UiKit.ORANGE, 28))
@@ -1015,17 +1015,14 @@ func _build_upgrades_page() -> Control:
 	_rent_label = UiKit.label("", 19, C_MUTED)
 	_rent_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	list.add_child(_rent_label)
-	var ids: Array = Progression.EXPANSIONS.duplicate()
+	var t := HBoxContainer.new()
+	t.add_theme_constant_override("separation", 8)
+	t.add_child(UiKit.icon_rect("circle-arrow-up", UiKit.ORANGE, 28))
+	t.add_child(UiKit.label("Ekipman ve Salon", 25, UiKit.TEXT, 900))
+	list.add_child(t)
 	for id in Progression.UPGRADES:
-		if not ids.has(id):
-			ids.append(id)
-	for id in ids:
-		if id == ids[Progression.EXPANSIONS.size()]:
-			var t := HBoxContainer.new()
-			t.add_theme_constant_override("separation", 8)
-			t.add_child(UiKit.icon_rect("circle-arrow-up", UiKit.ORANGE, 28))
-			t.add_child(UiKit.label("Ekipman ve Salon", 25, UiKit.TEXT, 900))
-			list.add_child(t)
+		if Progression.UPGRADES[id].get("hidden", false):
+			continue
 		var data: Dictionary = Progression.UPGRADES[id]
 		var row := PanelContainer.new()
 		row.add_theme_stylebox_override("panel", UiKit.card_style())
@@ -1072,7 +1069,7 @@ func _buy_upgrade(id: String) -> void:
 func _refresh_upgrades() -> void:
 	if _rent_label:
 		var costs := Progression.daily_costs()
-		_rent_label.text = "Günlük kira ₺%d + faturalar ₺%d, gün sonunda ödenir. Dükkan büyüdükçe kira artar ama masa ve müşteri de artar." % [costs["rent"], costs["bills"]]
+		_rent_label.text = "Yanındaki komşu dükkan kapanınca Mahalle'den satın al, duvarı yıkıp salonuna kat (+6 masa). Günlük kira ₺%d + faturalar ₺%d, gün sonunda ödenir." % [costs["rent"], costs["bills"]]
 	for id in _upgrade_rows:
 		var btn: Button = _upgrade_rows[id]["button"]
 		var tier: Label = _upgrade_rows[id]["tier"]
@@ -1902,10 +1899,86 @@ func _build_walk_ui() -> void:
 
 	main.walk_changed.connect(_on_walk_changed)
 	main.lot_reached.connect(_open_lot)
+	GameState.neighbor_news_ready.connect(_show_news)
+	get_tree().create_timer(2.2).timeout.connect(_show_news)
+
+
+## Mahalle haberi: bir komşu kapandı, dükkanı satılığa çıktı.
+func _show_news() -> void:
+	var lot := GameState.neighbor_news
+	if lot < 1 or not GameState.setup_done or GameState.tutorial_active() or not GameState.is_open:
+		return
+	if _reward_ui and is_instance_valid(_reward_ui):
+		# Önce ödül pencereleri kapansın
+		get_tree().create_timer(1.0).timeout.connect(_show_news)
+		return
+	GameState.neighbor_news = -1
+	var data: Dictionary = Branches.LOTS[lot]
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.08, 0.05, 0.03, 0.6)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_root.add_child(overlay)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(620, 0)
+	center.add_child(panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	panel.add_child(v)
+	var badge := UiKit.badge_rect("store", data["brand"], 96)
+	badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	v.add_child(badge)
+	var title := UiKit.label("Mahallede Haber!", 36, UiKit.TEXT, 900)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	var where := "Hemen yanındaki" if data.has("merge") else "Sokaktaki"
+	var body := UiKit.label("%s %s (%s) kapandı, dükkanı satılığa çıktı: ₺%s.\nGidip bak, al, istediğin gibi düzenle!" % [
+		where, data["company"], data["kind"].to_lower(), Neighborhood.money_text(data["price"])], 22, UiKit.MUTED, 800)
+	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.custom_minimum_size = Vector2(560, 0)
+	v.add_child(body)
+	var go := Button.new()
+	go.text = "Git Bak"
+	go.custom_minimum_size = Vector2(0, 90)
+	go.add_theme_font_size_override("font_size", 30)
+	UiKit.set_icon(go, "door-open", 34)
+	UiKit.candy(go, UiKit.ORANGE, Color.WHITE)
+	go.pressed.connect(func() -> void:
+		overlay.queue_free()
+		main.go_to(Main.SHOP)
+		await get_tree().create_timer(0.6 if main.screen == Main.SHOP else 0.9).timeout
+		main.start_walk()
+		await get_tree().create_timer(1.0).timeout
+		main._walk_to_lot(lot)
+	)
+	v.add_child(go)
+	var later := Button.new()
+	later.text = "Sonra"
+	later.custom_minimum_size = Vector2(0, 76)
+	later.add_theme_font_size_override("font_size", 26)
+	UiKit.candy(later, UiKit.NEUTRAL, UiKit.TEXT)
+	later.pressed.connect(overlay.queue_free)
+	v.add_child(later)
+	Sfx.play("approve")
+	Haptics.success()
 
 
 func _place_walk_button() -> void:
 	_walk_btn.visible = _cam_btn.visible and main.screen == Main.SHOP
+	# Satılık komşu varsa düğme turuncu parlar.
+	var sale := Branches.any_for_sale()
+	if sale != _walk_btn.has_meta("sale"):
+		if sale:
+			_walk_btn.set_meta("sale", true)
+			_walk_btn.text = "Mahalle • Satılık!"
+			UiKit.candy(_walk_btn, UiKit.ORANGE, Color.WHITE)
+		else:
+			_walk_btn.remove_meta("sale")
+			_walk_btn.text = "Mahalle"
+			UiKit.candy(_walk_btn, UiKit.CARD, UiKit.TEXT)
 	if _walk_btn.visible:
 		_walk_btn.size = _walk_btn.get_combined_minimum_size()
 		_walk_btn.position = Vector2(_top_bar.position.x + _top_bar.size.x - _walk_btn.size.x,
@@ -2056,7 +2129,11 @@ func _animate_money(value: int) -> void:
 
 func _set_money_text(value: float) -> void:
 	_money_value = value
-	_money.text = "₺ %d" % roundi(value)
+	var amount := roundi(value)
+	_money.text = "₺ %s" % Neighborhood.money_text(amount) if amount >= 0 else "₺ -%s" % Neighborhood.money_text(-amount)
+	# Büyük paralarda üst bar taşmasın
+	var digits := str(absi(amount)).length()
+	_money.add_theme_font_size_override("font_size", 34 if digits <= 4 else (29 if digits == 5 else 25))
 
 
 # --- Satış efekti -------------------------------------------------------------

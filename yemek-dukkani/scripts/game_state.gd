@@ -73,6 +73,11 @@ var player_register_closed := false
 var shops: Array[Dictionary] = []
 var active_shop := 0
 signal branches_changed
+## Komşu dükkanların durumu: "yer" -> "open" | "for_sale" (sahip olunanlar yazılmaz)
+var neighbors := {}
+## Gösterilmeyi bekleyen mahalle haberi: kapanan komşunun yeri (yoksa -1)
+var neighbor_news := -1
+signal neighbor_news_ready
 signal register_mode_changed
 
 ## Oyuncunun menüsü: kurulumda seçilir, seviye atladıkça yemek eklenebilir.
@@ -135,6 +140,9 @@ func set_floor(index: int) -> void:
 
 ## Dekor mağazası: seçeneği seçer, sahip değilse satın alır. Döner: başarılı mı.
 func choose_decor(category: String, index: int) -> bool:
+	if Decor.STYLES.has(category) and Decor.STYLES[category].get("patio", false) and category != "patio" \
+			and index > 0 and int(decor["patio_floor"]) == 0:
+		return false
 	var cost := Decor.choose(decor, category, index, money)
 	if cost < 0:
 		return false
@@ -149,6 +157,8 @@ func choose_decor(category: String, index: int) -> bool:
 func toggle_ornament(id: String) -> bool:
 	var owned: Array = decor["ornaments"]
 	var off: Array = decor["ornaments_off"]
+	if Decor.ORNAMENTS[id].get("patio", false) and int(decor["patio_floor"]) == 0:
+		return false
 	if not owned.has(id):
 		var price: int = Decor.ORNAMENTS[id]["price"]
 		if money < price:
@@ -160,6 +170,23 @@ func toggle_ornament(id: String) -> bool:
 		off.erase(id)
 	else:
 		off.append(id)
+	decor_changed.emit()
+	return true
+
+
+## Ön bahçeye masa ekler. Döner: alındı mı.
+func buy_patio_table() -> bool:
+	if int(decor["patio_floor"]) == 0:
+		show_toast("Önce ön bahçe zemini al")
+		return false
+	if int(decor["patio_tables"]) >= Decor.MAX_PATIO_TABLES:
+		return false
+	if money < Decor.PATIO_TABLE_PRICE:
+		show_toast("Yeterli paran yok")
+		return false
+	money -= Decor.PATIO_TABLE_PRICE
+	day_stats["upgrades"] += Decor.PATIO_TABLE_PRICE
+	decor["patio_tables"] = int(decor["patio_tables"]) + 1
 	decor_changed.emit()
 	return true
 
@@ -279,6 +306,7 @@ func to_dict() -> Dictionary:
 		"login_streak": login_streak, "last_login_day": last_login_day, "streak_claimed_day": streak_claimed_day,
 		"player_register_closed": player_register_closed,
 		"shops": _shops_snapshot(), "active_shop": active_shop,
+		"neighbors": neighbors, "neighbor_news": neighbor_news,
 	}
 
 
@@ -302,23 +330,31 @@ func _shops_snapshot() -> Array:
 	return list
 
 
-## Mahalledeki bir dükkan yerini satın alır. Döner: başarılı mı.
-func buy_lot(lot: int) -> bool:
+## Mahalledeki bir dükkan yerini satın alır. merge: bitişik komşunun duvarını yıkıp
+## salona katar; değilse theme türünde ayrı dükkan (şube) açılır. Döner: başarılı mı.
+func buy_lot(lot: int, merge := false, theme := "menum") -> bool:
 	var data: Dictionary = Branches.LOTS[lot]
 	if Branches.owned(lot):
 		return false
-	if level < int(data["level"]):
-		show_toast("Bu dükkan için Seviye %d gerekli" % data["level"])
+	if Branches.state(lot) != "for_sale":
+		show_toast("Bu dükkan satılık değil")
 		return false
 	if money < int(data["price"]):
 		show_toast("Yeterli paran yok")
 		return false
+	if merge and not Branches.can_merge(lot):
+		return false
 	money -= int(data["price"])
 	day_stats["upgrades"] += int(data["price"])
-	if shops.is_empty():
-		shops.append({ "lot": 0, "data": {} })
-		active_shop = 0
-	shops.append({ "lot": lot, "data": Branches.new_shop(lot) })
+	neighbors.erase(str(lot))
+	if merge:
+		upgrades[data["merge"]] = 1
+		upgrades_changed.emit()
+	else:
+		if shops.is_empty():
+			shops.append({ "lot": 0, "data": {} })
+			active_shop = 0
+		shops.append({ "lot": lot, "data": Branches.new_shop(lot, theme) })
 	branches_changed.emit()
 	return true
 
@@ -406,6 +442,9 @@ func from_dict(data: Dictionary) -> void:
 	for entry in data.get("shops", []):
 		shops.append({ "lot": int(entry["lot"]), "data": entry.get("data", {}) })
 	active_shop = clampi(int(data.get("active_shop", 0)), 0, maxi(shops.size() - 1, 0))
+	neighbors = (data.get("neighbors", {}) as Dictionary).duplicate()
+	neighbor_news = int(data.get("neighbor_news", -1))
+	Branches.migrate()
 	login_streak = int(data.get("login_streak", 0))
 	last_login_day = str(data.get("last_login_day", ""))
 	streak_claimed_day = str(data.get("streak_claimed_day", ""))
@@ -535,6 +574,11 @@ func end_day() -> void:
 		branch_reports.append(report)
 	day_stats["branches"] = branch_net
 	day_stats["branch_reports"] = branch_reports
+	# Mahalle: bir komşu kapanıp satılığa çıkabilir (sabah haber verilir)
+	var closed := Branches.close_neighbors()
+	if closed != -1:
+		neighbor_news = closed
+		branches_changed.emit()
 	day_stats["quitters"] = quitters
 	day_stats["money"] = money
 	_record_day(paid, quitters)
@@ -571,6 +615,8 @@ func start_day() -> void:
 	ensure_quests()
 	staff_changed.emit()
 	day_started.emit(day)
+	if neighbor_news != -1:
+		neighbor_news_ready.emit()
 	var spoiled := 0
 	for id in batches:
 		spoiled += expired_count(id)

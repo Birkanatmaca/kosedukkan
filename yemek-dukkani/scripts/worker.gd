@@ -21,8 +21,6 @@ const SWEEP_POINTS := [
 ## sıralarının arasında durur.
 const WINDOW_SPOTS := [
 	[Vector3(-3.0, 0, -9.5), PI], [Vector3(-4.0, 0, -9.5), PI], [Vector3(3.0, 0, -9.5), PI], [Vector3(4.0, 0, -9.5), PI],
-	[Vector3(5.4, 0, -3.95), PI / 2], [Vector3(5.4, 0, -6.45), PI / 2],
-	[Vector3(-5.4, 0, -3.95), -PI / 2], [Vector3(-5.4, 0, -6.45), -PI / 2],
 ]
 ## Süpürgenin ucu karakterin önünde bu uzaklıkta yere değer.
 const BROOM_REACH := 0.55
@@ -144,8 +142,10 @@ func _go_to_table(table: Dictionary) -> void:
 	_show_tool(null)
 	_set_icon("circle-alert", UiKit.ORANGE)
 	var pos: Vector3 = table["pos"]
-	# Masanın önünde, koridor tarafında durup siler.
+	# Masanın önünde, koridor tarafında durup siler (ön bahçede kaldırım tarafında).
 	var spot := Vector3(pos.x - signf(pos.x) * 0.3, 0, pos.z + Shop.LANE_OFFSET)
+	if Shop.is_outside(pos):
+		spot = Vector3(pos.x, 0, Shop.PATIO_LANE_Z)
 	_follow(Shop.corridor_path(position, spot), PI)
 
 
@@ -155,11 +155,7 @@ func _go_work() -> void:
 	_set_icon("", Color.WHITE)
 	if randf() < 0.4:
 		state = State.TO_WINDOW
-		# Genişletmeyle açılan yan duvarın pencereleri artık yok.
-		var spots := WINDOW_SPOTS.filter(func(w: Array) -> bool:
-			var x: float = (w[0] as Vector3).x
-			return absf(x) < 5.0 or GameState.upgrade_level("annex" if x < 0.0 else "garden") == 0)
-		var spot: Array = spots.pick_random()
+		var spot: Array = WINDOW_SPOTS.pick_random()
 		_follow(Shop.corridor_path(position, spot[0]), spot[1])
 		return
 	state = State.TO_SWEEP

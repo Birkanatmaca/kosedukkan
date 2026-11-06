@@ -66,6 +66,19 @@ const STYLES := {
 		{ "name": "Mermer Yuvarlak", "price": 420, "color": Color("#e9e7e2") },
 		{ "name": "Retro Kırmızı", "price": 380, "color": Color("#c8402f") },
 	] },
+	# Ön bahçe (dükkanın önündeki şerit): zemin alınınca masa, gölgelik ve süs eklenir.
+	"patio": { "name": "Ön Bahçe Zemini", "icon": "grid-3x3", "key": "patio_floor", "patio": true, "options": [
+		{ "name": "Yok", "price": 0, "color": Color("#c9c4bb") },
+		{ "name": "Ahşap Deck", "price": 450, "color": Color("#b98552") },
+		{ "name": "Taş Döşeme", "price": 500, "color": Color("#a7a29a") },
+		{ "name": "Çim ve Taş", "price": 550, "color": Color("#7fb366") },
+	] },
+	"shade": { "name": "Gölgelik", "icon": "sun", "key": "patio_shade", "patio": true, "options": [
+		{ "name": "Yok", "price": 0, "color": Color("#c9c4bb") },
+		{ "name": "Şemsiyeler", "price": 450, "color": Color("#e8553e") },
+		{ "name": "Çizgili Tente", "price": 750, "color": Color("#d6452f") },
+		{ "name": "Ahşap Pergola", "price": 1100, "color": Color("#7a4b32") },
+	] },
 }
 ## Süsler: bir kez alınır, sonra açılıp kapatılabilir.
 const ORNAMENTS := {
@@ -75,7 +88,13 @@ const ORNAMENTS := {
 	"frames": { "name": "Tablolar", "icon": "image", "desc": "Sağ duvarda iki tablo", "price": 150 },
 	"nazar": { "name": "Nazar Boncuğu", "icon": "heart", "desc": "Kapının yanında, uğur getirir", "price": 60 },
 	"board": { "name": "Menü Panosu", "icon": "clipboard-list", "desc": "Kapı yanında kara tahta", "price": 130 },
+	"patio_lights": { "name": "Bahçe Işıkları", "icon": "sparkles", "desc": "Bahçenin üstünde sarı ampul zinciri", "price": 280, "patio": true },
+	"patio_lanterns": { "name": "Fener Direkleri", "icon": "lamp-ceiling", "desc": "Bahçenin köşelerinde sokak fenerleri", "price": 240, "patio": true },
+	"patio_plants": { "name": "Bahçe Saksıları", "icon": "sprout", "desc": "Kaldırım kenarında çiçekli saksılar", "price": 200, "patio": true },
 }
+## Ön bahçe masası: adet başı fiyat ve en fazla adet (müşteriler oturur).
+const PATIO_TABLE_PRICE := 320
+const MAX_PATIO_TABLES := 4
 
 const TABLE_PRICE := 35
 const MAX_SETUP_TABLES := 4
@@ -88,6 +107,7 @@ static func default_state() -> Dictionary:
 		"clean": false, "register": false, "paint": false, "windows": false, "lamps": false, "sign": false,
 		"paint_color": 0, "floor": 0, "tables": 0, "plants": 0,
 		"rug": 0, "door": 0, "window_style": 0, "table_style": 0,
+		"patio_floor": 0, "patio_shade": 0, "patio_tables": 0,
 		## Alınan seçenekler ("door:2", "paint:3", "floor:1"...) ve süsler
 		"owned": [], "ornaments": [], "ornaments_off": [],
 	}
@@ -175,7 +195,7 @@ static func patience_bonus(decor: Dictionary) -> float:
 	if decor["windows"]:
 		bonus += 0.03
 	bonus += 0.02 * decor["plants"]
-	bonus += 0.02 * style_points(decor)
+	bonus += 0.02 * style_points(decor) + 0.01 * int(decor.get("patio_tables", 0))
 	return minf(bonus, 0.45)
 
 

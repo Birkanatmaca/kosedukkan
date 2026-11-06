@@ -10,6 +10,8 @@ var _option_buttons := {}
 ## süs -> Button
 var _ornament_buttons := {}
 var _bonus_label: Label
+var _patio_label: Label
+var _patio_btn: Button
 
 
 func _ready() -> void:
@@ -30,12 +32,29 @@ func _ready() -> void:
 		floors.append({ "name": f["name"], "color": f["a"] })
 	_option_grid("floor", floors, 4)
 	for category in Decor.STYLES:
-		_section(Decor.STYLES[category]["name"], Decor.STYLES[category]["icon"])
-		_option_grid(category, Decor.STYLES[category]["options"], 2)
+		if not Decor.STYLES[category].get("patio", false):
+			_section(Decor.STYLES[category]["name"], Decor.STYLES[category]["icon"])
+			_option_grid(category, Decor.STYLES[category]["options"], 2)
 
 	_section("Süsler", "sparkles")
 	for id in Decor.ORNAMENTS:
-		add_child(_ornament_row(id))
+		if not Decor.ORNAMENTS[id].get("patio", false):
+			add_child(_ornament_row(id))
+
+	# Ön bahçe: dükkanın önündeki şerit (masalarına müşteri oturur)
+	var head := UiKit.label("Ön Bahçe", 30, UiKit.TEXT, 900)
+	add_child(head)
+	var hint := UiKit.label("Dükkanın önüne zemin döşe, masa koy: müşteriler dışarıda da oturur. Gölgelik, ışık ve saksılar müşteriyi daha sabırlı yapar.", 18, UiKit.MUTED)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	add_child(hint)
+	for category in Decor.STYLES:
+		if Decor.STYLES[category].get("patio", false):
+			_section(Decor.STYLES[category]["name"], Decor.STYLES[category]["icon"])
+			_option_grid(category, Decor.STYLES[category]["options"], 2)
+	add_child(_patio_tables_row())
+	for id in Decor.ORNAMENTS:
+		if Decor.ORNAMENTS[id].get("patio", false):
+			add_child(_ornament_row(id))
 
 	GameState.decor_changed.connect(_refresh)
 	GameState.money_changed.connect(func(_v: int) -> void: _refresh())
@@ -100,8 +119,50 @@ func _ornament_row(id: String) -> Control:
 	return card
 
 
+## Ön bahçe masası satırı: kaç masa var, "+1 Masa" düğmesi.
+func _patio_tables_row() -> Control:
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", UiKit.card_style())
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	card.add_child(row)
+	row.add_child(UiKit.badge_rect("armchair", UiKit.ORANGE, 48))
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.alignment = BoxContainer.ALIGNMENT_CENTER
+	info.add_theme_constant_override("separation", 0)
+	row.add_child(info)
+	info.add_child(UiKit.label("Bahçe Masası", 21, UiKit.TEXT, 900))
+	_patio_label = UiKit.label("", 16, UiKit.MUTED)
+	info.add_child(_patio_label)
+	_patio_btn = Button.new()
+	_patio_btn.custom_minimum_size = Vector2(150, 64)
+	_patio_btn.add_theme_font_size_override("font_size", 20)
+	_patio_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_patio_btn.pressed.connect(func() -> void:
+		if GameState.buy_patio_table():
+			Sfx.play("kaching")
+			Haptics.success()
+			GameState.show_toast("Bahçeye masa kondu!")
+		else:
+			Sfx.play("error")
+	)
+	row.add_child(_patio_btn)
+	return card
+
+
 func _refresh() -> void:
 	var decor := GameState.decor
+	var tables: int = decor["patio_tables"]
+	_patio_label.text = "%d / %d masa  •  müşteriler dışarıda oturur" % [tables, Decor.MAX_PATIO_TABLES]
+	if tables >= Decor.MAX_PATIO_TABLES:
+		_patio_btn.text = "Tam"
+		_patio_btn.icon = null
+		UiKit.candy(_patio_btn, UiKit.NEUTRAL, UiKit.TEXT)
+	else:
+		_patio_btn.text = "₺%d" % Decor.PATIO_TABLE_PRICE
+		UiKit.set_icon(_patio_btn, "shopping-cart" if int(decor["patio_floor"]) > 0 else "lock", 24)
+		UiKit.candy(_patio_btn, UiKit.GREEN if int(decor["patio_floor"]) > 0 else UiKit.NEUTRAL, Color.WHITE if int(decor["patio_floor"]) > 0 else UiKit.TEXT)
 	var bonus := roundi(Decor.patience_bonus(decor) * 100.0)
 	_bonus_label.text = "Dekorun müşterileri %%%d daha sabırlı yapıyor (en fazla %%45). Her stil ve süs biraz daha ekler." % bonus
 	for category in _option_buttons:
@@ -136,6 +197,8 @@ func _refresh() -> void:
 
 
 func _choose(category: String, index: int) -> void:
+	if _needs_patio(Decor.STYLES.get(category, {}).get("patio", false) and category != "patio" and index > 0):
+		return
 	var was_owned := Decor.owns(GameState.decor, category, index)
 	if GameState.choose_decor(category, index):
 		Sfx.play("pop" if was_owned else "kaching")
@@ -148,6 +211,8 @@ func _choose(category: String, index: int) -> void:
 
 
 func _toggle(id: String) -> void:
+	if _needs_patio(Decor.ORNAMENTS[id].get("patio", false)):
+		return
 	var owned: bool = (GameState.decor["ornaments"] as Array).has(id)
 	if GameState.toggle_ornament(id):
 		Sfx.play("pop" if owned else "kaching")
@@ -157,6 +222,15 @@ func _toggle(id: String) -> void:
 	else:
 		Sfx.play("error")
 		GameState.show_toast("Yeterli paran yok")
+
+
+## Bahçe zemini yoksa bahçe eşyası alınamaz.
+func _needs_patio(is_patio_item: bool) -> bool:
+	if is_patio_item and int(GameState.decor["patio_floor"]) == 0:
+		Sfx.play("error")
+		GameState.show_toast("Önce ön bahçe zemini al")
+		return true
+	return false
 
 
 ## Seçili seçenek yeşil kenarlı, alınmış olan krem, alınmamış beyaz görünür.
